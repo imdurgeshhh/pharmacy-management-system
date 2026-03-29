@@ -1,0 +1,160 @@
+/* Import Fonts */
+@import '@fontsource/syne/600.css';
+@import '@fontsource/syne/700.css';
+@import '@fontsource/syne/800.css';
+@import '@fontsource/inter/300.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Medical Green Theme Colors */
+    --color-primary: 46 125 50;      /* #2E7D32 - Primary Green */
+    --color-primary-light: 76 175 80; /* #4CAF50 - Light Green */
+    --color-secondary: 34 197 94;      /* #22C55E - Emerald Green */
+    --color-accent: 245 158 11;       /* Amber 500 */
+
+    /* Backgrounds & Surfaces (Light Mode) */
+    --bg-page: 245 249 246;           /* #F5F9F6 - Soft Medical Green Background */
+    --bg-surface: 255 255 255;         /* #FFFFFF - Pure White */
+    --bg-surface-elevated: 240 253 244; /* #F0FDF4 - Light Green Tint */
+    --bg-glass: 255 255 255;
+    --bg-glass-opacity: 0.65;
+
+    /* Typography */
+    --text-heading: 31 41 55;         /* #1F2937 - Text Dark */
+    --text-body: 55 65 81;            /* #374151 - Text Body */
+    --text-muted: 107 114 128;        /* #6B7280 - Text Muted */
+
+    /* Borders & Decor */
+    --border-subtle: 229 231 235;     /* #E5E7EB - Border Color */
+    --border-strong: 209 213 219;     /* #D1D5DB - Border Strong */
+
+    /* Misc */
+    --shadow-color: 0 0 0;
+    --shadow-opacity: 0.05;
+    --card-shadow: 0 8px 30px rgba(var(--shadow-color), var(--shadow-opacity));
+    --card-shadow-hover: 0 12px 40px rgba(var(--shadow-color), calc(var(--shadow-opacity) + 0.05));
+  }
+
+  /* Dark Mode Placeholder */
+  .dark {
+    --color-primary: 76 175 80;       /* #4CAF50 - Light Green */
+    --color-primary-light: 129 199 132; /* Light Green */
+
+    /* Dark Theme Colors */
+    --bg-page: 15 23 42;              /* Slate 900 */
+    --bg-surface: 30 41 59;           /* Slate 800 */
+    --bg-surface-elevated: 51 65 85;  /* Slate 700 */
+    --bg-glass: 30 41 59;
+    --bg-glass-opacity: 0.45;
+
+    --text-heading: 248 250 252;       /* Slate 50 */
+    --text-body: 203 213 225;          /* Slate 300 */
+    --text-muted: 148 163 184;        /* Slate 400 */
+
+    --border-subtle: 51 65 85;         /* Slate 700 */
+    --border-strong: 71 85 105;        /* Slate 600 */
+
+    --shadow-color: 0 0 0;
+    --shadow-opacity: 0.25;
+    --card-shadow: 0 8px 30px rgba(var(--shadow-color), var(--shadow-opacity));
+    --card-shadow-hover: 0 12px 40px rgba(var(--shadow-color), calc(var(--shadow-opacity) + 0.05));
+  }
+
+  body {
+    @apply bg-[rgb(var(--bg-page))] text-[rgb(var(--text-body))] font-sans antialiased min-h-screen selection:bg-[rgb(var(--color-primary))]/30 selection:text-[rgb(var(--text-heading))];
+    /* Medical-themed background with subtle green gradient */
+    background-image:
+      radial-gradient(at 0% 0%, rgba(var(--color-primary-light) / 0.08) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(var(--color-secondary) / 0.08) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, rgba(var(--color-primary) / 0.05) 0px, transparent 50%);
+    background-attachment: fixed;
+    transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-display font-bold text-[rgb(var(--text-heading))] tracking-tight;
+  }
+}
+
+@layer components {
+
+  /* Fluid Typographic Headings via clamp() */
+  .h1-fluid {
+    font-size: clamp(2rem, 5vw + 1rem, 3.5rem);
+    line-height: 1.1;
+  }
+
+  .h2-fluid {
+    font-size: clamp(1.5rem, 3vw + 1rem, 2.5rem);
+    line-height: 1.2;
+  }
+
+  .h3-fluid {
+    font-size: clamp(1.25rem, 2vw + 1rem, 1.75rem);
+    line-height: 1.3;
+  }
+
+  /* Glassmorphism Bento Card */
+  .card-glass {
+    @apply bg-[rgb(var(--bg-glass))]/[var(--bg-glass-opacity)] backdrop-blur-xl border border-[rgb(var(--border-subtle))] rounded-2xl p-6 relative overflow-hidden transition-all duration-300 ease-out;
+    box-shadow: var(--card-shadow);
+  }
+
+  .card-hover-lift {
+    @apply hover:-translate-y-1 hover:border-[rgb(var(--border-strong))];
+  }
+
+  .card-hover-lift:hover {
+    box-shadow: var(--card-shadow-hover);
+  }
+
+  /* Core Buttons - Medical Green Theme */
+  .btn-primary {
+    @apply relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-[rgb(var(--color-primary))] px-6 py-3 font-medium text-white shadow-lg transition-all duration-300 ease-out hover:bg-opacity-90 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(var(--color-primary)/0.3)] active:scale-95 active:translate-y-0;
+    /* Subtle shine effect */
+    background-image: linear-gradient(to right, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0) 100%);
+    background-size: 200% auto;
+  }
+
+  .btn-primary:hover {
+    background-position: right center;
+  }
+
+  .btn-secondary {
+    @apply relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-transparent border-2 border-[rgb(var(--color-primary))] px-6 py-3 font-medium text-[rgb(var(--color-primary))] transition-all duration-300 ease-out hover:bg-[rgb(var(--color-primary))] hover:text-white hover:-translate-y-0.5 active:scale-95 active:translate-y-0;
+  }
+
+  .btn-danger {
+    @apply btn-primary bg-red-500 hover:shadow-[0_8px_20px_rgba(239, 68, 68, 0.3)];
+  }
+
+  /* Form Elements - Medical Green Focus */
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl bg-[rgb(var(--bg-surface))]/60 backdrop-blur-md border border-[rgb(var(--border-subtle))] text-[rgb(var(--text-body))] placeholder-[rgb(var(--text-muted))] outline-none transition-all duration-300 focus:ring-2 focus:ring-[rgb(var(--color-primary))]/50 focus:border-[rgb(var(--color-primary))] focus:bg-[rgb(var(--bg-surface))];
+  }
+}
+
+@layer utilities {
+
+  /* Hide scrollbar but keep functionality */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

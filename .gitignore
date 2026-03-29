@@ -1,0 +1,89 @@
+# ============================================================
+# SENSITIVE / SECRET FILES
+# ============================================================
+.env
+.env.*
+!.env.example          # allow the example template to be committed
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+secrets/
+config/secrets.*
+
+# ============================================================
+# NODE / NPM
+# ============================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json       # remove this line if you want to commit lock files
+yarn.lock
+
+# ============================================================
+# LOG FILES
+# ============================================================
+*.log
+logs/
+server_errors.log
+backend/server_errors.log
+frontend/build_err.log
+frontend/build_error.txt
+frontend/dev_err.log
+
+# ============================================================
+# BUILD / DIST OUTPUT
+# ============================================================
+dist/
+build/
+frontend/dist/
+frontend/build/
+
+# ============================================================
+# UPLOADS / USER-GENERATED CONTENT
+# ============================================================
+backend/uploads/
+uploads/
+
+# ============================================================
+# DATABASE / DUMP FILES
+# ============================================================
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+dump.rdb
+
+# ============================================================
+# OS & EDITOR JUNK
+# ============================================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+
+# ============================================================
+# MISC
+# ============================================================
+*.tmp
+*.bak
+*.swp
+*.orig
+.cache/
