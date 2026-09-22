@@ -1,14 +1,18 @@
 import axios from 'axios';
 import useStore from '../store/useStore';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-if (!apiBaseUrl) {
+let rawBaseUrl = import.meta.env.VITE_API_BASE_URL;
+if (!rawBaseUrl) {
     throw new Error('Missing VITE_API_BASE_URL in your .env file.');
 }
 
+// Normalize: remove trailing slashes and ensure /api endpoint suffix
+rawBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+const apiBaseUrl = rawBaseUrl.endsWith('/api') ? rawBaseUrl : `${rawBaseUrl}/api`;
+
 const api = axios.create({
     baseURL: apiBaseUrl,
-    timeout: 10000,
+    timeout: 30000, // 30s timeout to allow for PaaS cold-starts (e.g. Render spin-up)
 });
 
 /**
