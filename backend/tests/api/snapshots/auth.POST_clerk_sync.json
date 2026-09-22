@@ -1,0 +1,12 @@
+{
+  "message": "string",
+  "user": {
+    "id": "number",
+    "name": "string",
+    "email": "string",
+    "username": "string",
+    "role": "string",
+    "employee_id": "null",
+    "admin_id": "null"
+  }
+}

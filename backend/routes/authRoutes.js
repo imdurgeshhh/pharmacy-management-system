@@ -1,15 +1,17 @@
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
+const { authenticateToken } = require('../middleware/auth');
+const { adminOnly } = require('../middleware/roleCheck');
+const { authLimiter } = require('../middleware/rateLimiter');
+const { clerkSyncSchema } = require('../middleware/validate');
 
-// POST /api/auth/register - Create new employee
-router.post('/register', authController.register);
+// GET /api/auth/employees - List employees (admin only)
+router.get('/employees', authenticateToken, adminOnly, authController.getEmployees);
 
-// POST /api/auth/login - Employee login
-router.post('/login', authController.login);
-
-// GET /api/auth/employees - Admin only list employees
-router.get('/employees', authController.getEmployees);
+// POST /api/auth/clerk-sync - Clerk auth sync endpoint (public — with auth rate limiting and strict schema validation)
+router.post('/clerk-sync', authLimiter, clerkSyncSchema, authController.clerkSync);
 
 module.exports = router;
-

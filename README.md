@@ -1,6 +1,6 @@
 # 💊 Pharmacy Management System
 
-A full-stack **Medical Shop Management System** built with React and Node.js, designed to streamline pharmacy operations including inventory tracking, point-of-sale billing, purchase orders, supplier management, and PDF report generation.
+A full-stack **Medical Shop & Pharmacy Management System** built with React, Vite, Node.js/Express, PostgreSQL, and Clerk authentication. Designed to streamline pharmacy operations including inventory tracking, drug schedule compliance, point-of-sale billing, purchase orders, wholesale/supplier management, prescription OCR, and PDF report generation.
 
 ---
 
@@ -11,9 +11,9 @@ A full-stack **Medical Shop Management System** built with React and Node.js, de
 - [Project Structure](#-project-structure)
 - [Prerequisites](#-prerequisites)
 - [Getting Started](#-getting-started)
-- [Environment Variables](#-environment-variables)
+- [OCR Setup](#-ocr-setup)
 - [Running the App](#-running-the-app)
-- [Pages & Modules](#-pages--modules)
+- [Running Tests](#-running-tests)
 - [Contributing](#-contributing)
 - [License](#-license)
 
@@ -21,14 +21,13 @@ A full-stack **Medical Shop Management System** built with React and Node.js, de
 
 ## ✨ Features
 
-- 🔐 **Authentication** — Employee registration and login with token-based auth
-- 📦 **Inventory Management** — Track stock levels with low-stock and critical-stock alerts
-- 🛒 **Point of Sale (POS)** — Fast billing interface with cart management and barcode scanner support
-- 📥 **Purchase Orders** — Manage incoming stock from suppliers
-- 🏭 **Supplier Management** — Add and manage supplier records
-- 📊 **Dashboard** — Real-time stats with sales and purchase charts
-- 📄 **Reports** — Generate and download PDF reports using PDFKit
-- 🎨 **Green & White Medical Theme** — Clean, accessible UI using Tailwind CSS
+- 🔐 **Multi-Tenant Authentication & RBAC** — Clerk-synced roles (Admin, Shopkeeper, Employee) with isolated tenant data and fail-closed security.
+- 📦 **Inventory Management** — Track stock levels, batch numbers, expiry dates, and Indian Drug Schedule tags (`OTC`, `H`, `H1`, `X`, `G`).
+- 🛒 **Point of Sale (POS)** — Fast retail billing with customer autofill, instant receipt calculation, and branded PDF invoice generation.
+- 📥 **Purchases & Suppliers** — Manage purchase entries, supplier directories, and wholesale transactions.
+- 🔍 **Prescription & Invoice OCR** — Extract medicine names and details directly from uploaded prescription images and bills.
+- 🛡️ **Security Hardened** — Multi-tier rate limiting with exponential backoff, strict schema input validation, magic-byte upload verification, and sanitized error responses.
+- 📊 **Reports & Analytics** — Interactive dashboards, sales/purchase graphs, and Excel/PDF export pipelines.
 
 ---
 
@@ -37,195 +36,105 @@ A full-stack **Medical Shop Management System** built with React and Node.js, de
 ### Frontend
 | Technology | Purpose |
 |---|---|
-| React | UI framework |
-| Vite | Build tool & dev server |
-| Tailwind CSS | Utility-first styling |
-| Zustand | Global state management |
-| Axios | HTTP client with interceptors |
-| React Router | Client-side routing |
+| React 19 + Vite | UI framework & modern build tool |
+| Tailwind CSS | Responsive utility-first styling |
+| Lucide React | Icon system |
+| Zustand | Global client state management |
+| Axios | HTTP client with auth interceptors |
+| Vitest + React Testing Library + MSW | Automated frontend test suite |
 
 ### Backend
 | Technology | Purpose |
 |---|---|
-| Node.js | Runtime environment |
-| Express.js | REST API framework |
-| nodemon | Auto-reload during development |
-| PDFKit | PDF report generation |
-| Oracle DB / SQL | Database (via setup scripts) |
-
----
-
-## 📁 Project Structure
-
-```
-pharmacy-management-system/
-├── backend/
-│   ├── controllers/
-│   │   └── authController.js      # Auth logic (register/login/token)
-│   ├── scripts/
-│   │   └── setup_db.js            # Database setup & seed script
-│   └── ...
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Header.jsx         # Top navigation bar
-│   │   │   └── Sidebar.jsx        # Side menu navigation
-│   │   ├── config/
-│   │   │   └── axios.js           # Axios instance with auth interceptor
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx      # Stats overview & charts
-│   │   │   ├── Inventory.jsx      # Medicine stock management
-│   │   │   ├── Login.jsx          # Login page
-│   │   │   ├── Register.jsx       # Employee registration
-│   │   │   ├── POS.jsx            # Point of sale / billing
-│   │   │   ├── Purchases.jsx      # Purchase order management
-│   │   │   ├── Reports.jsx        # Sales & purchase reports
-│   │   │   └── Suppliers.jsx      # Supplier management
-│   │   ├── store/
-│   │   │   └── useStore.js        # Zustand store (auth, token, state)
-│   │   └── index.css              # Global styles & CSS variables
-│   ├── tailwind.config.js
-│   └── vite.config.js
-├── package.json                   # Root dependencies (nodemon, pdfkit)
-├── THEME_PLAN.md
-└── TODO.md
-```
+| Node.js + Express | REST API framework |
+| PostgreSQL (`pg`) | Relational database persistence |
+| Clerk SDK | Authentication & identity verification |
+| Express Validator | Strict schema input validation |
+| Express Rate Limit | Configurable multi-tier rate limiting |
+| Tesseract.js | OCR prescription processing |
+| jsPDF / PDFKit / xlsx | Document & spreadsheet generation |
 
 ---
 
 ## ✅ Prerequisites
 
-Make sure you have the following installed:
-
 - [Node.js](https://nodejs.org/) v18+
-- [npm](https://www.npmjs.com/) v9+
-- A running Oracle/SQL database instance
+- [PostgreSQL](https://www.postgresql.org/) v14+ (or a cloud provider like Supabase)
+- A [Clerk](https://clerk.com/) account for authentication keys
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Clone the repository
+### 1. Environment Variables
 
+#### Backend
+Copy the example environment file:
 ```bash
-git clone https://github.com/imdurgeshhh/pharmacy-management-system.git
-cd pharmacy-management-system
+cp backend/.env.example backend/.env
 ```
+Configure your database connection (`DB_USER`, `DB_HOST`, `DB_PASSWORD`, `DB_NAME`) and Clerk keys (`CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`).
 
-### 2. Install root dependencies
-
+#### Frontend
+Copy the example environment file:
 ```bash
-npm install
+cp frontend/.env.example frontend/.env
 ```
-
-### 3. Install backend dependencies
-
-```bash
-cd backend
-npm install
-```
-
-### 4. Install frontend dependencies
-
-```bash
-cd ../frontend
-npm install
-```
+Configure `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_API_BASE_URL`.
 
 ---
 
-## 🔧 Environment Variables
+## 🔍 OCR Setup
 
-Create a `.env` file in the `backend/` directory:
+The prescription/invoice scanner uses Tesseract OCR. Download the trained data model into the `backend/` directory:
 
-```env
-PORT=5000
-DB_HOST=localhost
-DB_PORT=1521
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-DB_SERVICE=your_service_name
-JWT_SECRET=your_jwt_secret
+```bash
+wget https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata -O backend/eng.traineddata
+```
+
+*(On Windows PowerShell)*:
+```powershell
+Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata" -OutFile "backend/eng.traineddata"
 ```
 
 ---
 
 ## ▶️ Running the App
 
-### Set up the database
-
+### 1. Start the Backend API
 ```bash
 cd backend
-node scripts/setup_db.js
-```
-
-### Start the backend server
-
-```bash
-cd backend
-npm run dev        # with nodemon (auto-reload)
-# or
-node server.js     # without nodemon
-```
-
-The backend API will run at `http://localhost:5000`.
-
-### Start the frontend
-
-```bash
-cd frontend
+npm install
 npm run dev
 ```
+The API server runs at `http://localhost:5000`.
 
-The frontend will be available at `http://localhost:5173`.
-
----
-
-## 📄 Pages & Modules
-
-| Page | Description |
-|---|---|
-| **Login / Register** | Employee authentication with token-based session |
-| **Dashboard** | Overview of sales, stock levels, and key metrics |
-| **Inventory** | Add, update, and monitor medicine stock with expiry alerts |
-| **POS** | Barcode-enabled billing with cart and receipt generation |
-| **Purchases** | Record and manage purchase orders from suppliers |
-| **Suppliers** | Maintain supplier contact and product information |
-| **Reports** | View and download sales/purchase reports as PDFs |
+### 2. Start the Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+The application will be available at `http://localhost:5174`.
 
 ---
 
-## 🎨 Theme
+## 🧪 Running Tests
 
-The UI uses a **Green & White medical theme**:
+### Backend API Tests (236 tests across 17 suites)
+```bash
+cd backend
+npm test
+```
 
-| Token | Color | Hex |
-|---|---|---|
-| Primary | Dark Green | `#2E7D32` |
-| Accent | Light Green | `#4CAF50` |
-| Background | Soft White | `#F5F9F6` |
-| Surface | White | `#FFFFFF` |
-| Text | Dark Gray | `#1F2937` |
-| Border | Light Gray | `#E5E7EB` |
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! To get started:
-
-1. Fork the repository
-2. Create a new branch: `git checkout -b feature/your-feature-name`
-3. Commit your changes: `git commit -m "Add your feature"`
-4. Push to your branch: `git push origin feature/your-feature-name`
-5. Open a Pull Request
+### Frontend Tests (169 tests across 26 suites)
+```bash
+cd frontend
+npm test
+```
 
 ---
 
 ## 📜 License
 
 This project is open source and available under the [MIT License](LICENSE).
-
----
-
-> Built with ❤️ for medical shop owners who deserve better software.

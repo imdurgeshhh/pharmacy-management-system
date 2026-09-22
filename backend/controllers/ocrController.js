@@ -1,3 +1,5 @@
+'use strict';
+
 const Tesseract = require('tesseract.js');
 const fs = require('fs');
 const path = require('path');
@@ -7,27 +9,25 @@ exports.scanInvoice = async (req, res) => {
         return res.status(400).json({ error: 'No image uploaded' });
     }
 
-    const imagePath = path.join(__dirname, '..', req.file.path);
+    const imagePath = req.file.path;
 
     try {
-        console.log(`Starting OCR on ${imagePath}`);
+        console.log(`Starting OCR on temporary upload`);
         const { data: { text } } = await Tesseract.recognize(imagePath, 'eng', {
             logger: m => console.log(m)
         });
 
         // Basic parsing logic to find items, quantities, and prices
-        // Since invoices are unstructured, this is a best-effort parse using regex
         const lines = text.split('\n').filter(line => line.trim().length > 0);
 
-        let parsedData = {
+        const parsedData = {
             rawText: text,
             potentialItems: []
         };
 
         // Heuristic: look for lines that might be line items (contain a number, some text, maybe a price)
-        // This is highly simplified
         lines.forEach(line => {
-            // Trying to match lines with formats like "MedicneName 10 15.50"
+            // Trying to match lines with formats like "MedicineName 10 15.50"
             const match = line.match(/^([a-zA-Z\s\-]+)\s+(\d+)\s+([\d\.]+)/);
             if (match) {
                 parsedData.potentialItems.push({
@@ -38,12 +38,18 @@ exports.scanInvoice = async (req, res) => {
             }
         });
 
-        // Clean up the uploaded image to save space
-        fs.unlinkSync(imagePath);
-
-        res.json({ message: 'OCR completed', data: parsedData });
+        return res.json({ message: 'OCR completed', data: parsedData });
     } catch (error) {
         console.error('OCR Error:', error);
-        res.status(500).json({ error: 'Failed to process invoice image' });
+        return res.status(500).json({ error: 'Failed to process invoice image' });
+    } finally {
+        // Guaranteed cleanup of uploaded temporary image
+        try {
+            if (fs.existsSync(imagePath)) {
+                fs.unlinkSync(imagePath);
+            }
+        } catch (cleanupErr) {
+            console.error('Failed to cleanup temporary upload:', cleanupErr.message);
+        }
     }
 };

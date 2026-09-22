@@ -32,6 +32,9 @@ export default {
             animation: {
                 'fade-in': 'fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
                 'slide-up': 'slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                'dropdown-enter': 'dropdownEnter 0.13s cubic-bezier(0.2, 0, 0, 1) forwards',
+                'modal-backdrop': 'modalBackdrop 0.15s ease-out forwards',
+                'modal-enter': 'modalEnter 0.2s cubic-bezier(0.2, 0, 0, 1) forwards',
             },
             keyframes: {
                 fadeIn: {
@@ -41,7 +44,19 @@ export default {
                 slideUp: {
                     '0%': { transform: 'translateY(20px)', opacity: '0' },
                     '100%': { transform: 'translateY(0)', opacity: '1' },
-                }
+                },
+                dropdownEnter: {
+                    '0%': { opacity: '0', transform: 'translateY(-6px) scale(0.97)' },
+                    '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+                },
+                modalBackdrop: {
+                    '0%': { opacity: '0' },
+                    '100%': { opacity: '1' },
+                },
+                modalEnter: {
+                    '0%': { opacity: '0', transform: 'translateY(10px) scale(0.97)' },
+                    '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+                },
             }
         },
     },

@@ -1,0 +1,17 @@
+{
+  "[]": {
+    "id": "number",
+    "name": "string",
+    "email": "string",
+    "username": "string",
+    "role": "string",
+    "employee_id": "null",
+    "qualification": "null",
+    "address": "null",
+    "mobile_no": "null",
+    "aadhar_number": "null",
+    "is_active": "boolean",
+    "created_at": "string",
+    "full_name": "string"
+  }
+}

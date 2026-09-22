@@ -1,0 +1,9 @@
+{
+  "[]": {
+    "name": "string",
+    "medicine_name": "string",
+    "batch_number": "string",
+    "stock_qty": "number",
+    "expiry_date": "string"
+  }
+}

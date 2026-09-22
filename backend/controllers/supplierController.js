@@ -2,7 +2,11 @@ const { pool } = require('../config/db');
 
 exports.getSuppliers = async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM SUPPLIERS ORDER BY name');
+        const adminId = req.adminId;
+        const result = await pool.query(
+            'SELECT * FROM SUPPLIERS WHERE admin_id = $1 ORDER BY name',
+            [adminId]
+        );
         res.json(result.rows);
     } catch (error) {
         console.error(error);
@@ -13,7 +17,17 @@ exports.getSuppliers = async (req, res) => {
 exports.getSupplierById = async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await pool.query('SELECT * FROM SUPPLIERS WHERE id = $1', [id]);
+        const adminId = req.adminId;
+
+        // Graceful error if ID is non-numeric
+        if (isNaN(Number(id))) {
+            return res.status(400).json({ error: 'Invalid supplier ID' });
+        }
+
+        const result = await pool.query(
+            'SELECT * FROM SUPPLIERS WHERE id = $1 AND admin_id = $2',
+            [id, adminId]
+        );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
@@ -25,11 +39,12 @@ exports.getSupplierById = async (req, res) => {
 };
 
 exports.addSupplier = async (req, res) => {
+    const adminId = req.adminId;
     const { name, contact_person, phone, email, address } = req.body;
     try {
         const result = await pool.query(
-            'INSERT INTO SUPPLIERS (name, contact_person, phone, email, address) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [name, contact_person, phone, email, address]
+            'INSERT INTO SUPPLIERS (name, contact_person, phone, email, address, admin_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [name, contact_person, phone, email, address, adminId]
         );
         res.status(201).json(result.rows[0]);
     } catch (error) {
@@ -40,11 +55,12 @@ exports.addSupplier = async (req, res) => {
 
 exports.updateSupplier = async (req, res) => {
     const { id } = req.params;
+    const adminId = req.adminId;
     const { name, contact_person, phone, email, address } = req.body;
     try {
         const result = await pool.query(
-            'UPDATE SUPPLIERS SET name = $1, contact_person = $2, phone = $3, email = $4, address = $5 WHERE id = $6 RETURNING *',
-            [name, contact_person, phone, email, address, id]
+            'UPDATE SUPPLIERS SET name = $1, contact_person = $2, phone = $3, email = $4, address = $5 WHERE id = $6 AND admin_id = $7 RETURNING *',
+            [name, contact_person, phone, email, address, id, adminId]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Supplier not found' });
@@ -58,8 +74,12 @@ exports.updateSupplier = async (req, res) => {
 
 exports.deleteSupplier = async (req, res) => {
     const { id } = req.params;
+    const adminId = req.adminId;
     try {
-        const result = await pool.query('DELETE FROM SUPPLIERS WHERE id = $1 RETURNING *', [id]);
+        const result = await pool.query(
+            'DELETE FROM SUPPLIERS WHERE id = $1 AND admin_id = $2 RETURNING *',
+            [id, adminId]
+        );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Supplier not found' });
         }

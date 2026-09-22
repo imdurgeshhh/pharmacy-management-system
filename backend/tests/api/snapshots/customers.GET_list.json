@@ -1,0 +1,10 @@
+{
+  "[]": {
+    "id": "number",
+    "name": "string",
+    "phone": "string",
+    "email": "string",
+    "credit_balance": "string",
+    "created_at": "string"
+  }
+}

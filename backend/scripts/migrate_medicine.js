@@ -1,63 +1,80 @@
-const { Pool } = require('pg');
-require('dotenv').config();
-
-const pool = new Pool({
-    user: process.env.DB_USER || 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'pharma_db',
-    password: process.env.DB_PASSWORD || 'postgres',
-    port: process.env.DB_PORT || 5432,
-    ssl: { rejectUnauthorized: false }
-});
+const { pool } = require('../config/db');
 
 const migrateMedicineTable = async () => {
     try {
-        // Check if new columns exist
+        console.log('Starting medicine table migration...');
+
+        // 1. Add missing columns safely without breaking existing queries
+        await pool.query(`
+            ALTER TABLE MEDICINES 
+                ADD COLUMN IF NOT EXISTS medicine_name VARCHAR(100),
+                ADD COLUMN IF NOT EXISTS brand_name VARCHAR(100),
+                ADD COLUMN IF NOT EXISTS salt_composition VARCHAR(200),
+                ADD COLUMN IF NOT EXISTS medicine_category VARCHAR(50),
+                ADD COLUMN IF NOT EXISTS dosage_form VARCHAR(50),
+                ADD COLUMN IF NOT EXISTS strength VARCHAR(50);
+        `);
+        console.log('Columns ensured on MEDICINES table.');
+
+        // 2. Populate new columns from legacy columns
+        await pool.query(`
+            UPDATE MEDICINES 
+            SET medicine_name = name 
+            WHERE medicine_name IS NULL AND name IS NOT NULL;
+
+            UPDATE MEDICINES 
+            SET name = medicine_name 
+            WHERE name IS NULL AND medicine_name IS NOT NULL;
+
+            UPDATE MEDICINES 
+            SET medicine_category = category 
+            WHERE medicine_category IS NULL AND category IS NOT NULL;
+
+            UPDATE MEDICINES 
+            SET category = medicine_category 
+            WHERE category IS NULL AND medicine_category IS NOT NULL;
+        `);
+        console.log('Synchronized data between name/medicine_name and category/medicine_category.');
+
+        // 3. Create a trigger to keep both sets of column names in sync for backwards compatibility
+        await pool.query(`
+            CREATE OR REPLACE FUNCTION sync_medicine_columns()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                IF NEW.medicine_name IS NULL AND NEW.name IS NOT NULL THEN
+                    NEW.medicine_name := NEW.name;
+                ELSIF NEW.name IS NULL AND NEW.medicine_name IS NOT NULL THEN
+                    NEW.name := NEW.medicine_name;
+                END IF;
+
+                IF NEW.medicine_category IS NULL AND NEW.category IS NOT NULL THEN
+                    NEW.medicine_category := NEW.category;
+                ELSIF NEW.category IS NULL AND NEW.medicine_category IS NOT NULL THEN
+                    NEW.category := NEW.medicine_category;
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            DROP TRIGGER IF EXISTS trg_sync_medicine_columns ON MEDICINES;
+
+            CREATE TRIGGER trg_sync_medicine_columns
+            BEFORE INSERT OR UPDATE ON MEDICINES
+            FOR EACH ROW EXECUTE FUNCTION sync_medicine_columns();
+        `);
+        console.log('Trigger created to keep medicine name & category columns in sync.');
+
         const checkResult = await pool.query(`
             SELECT column_name 
             FROM information_schema.columns 
             WHERE table_name = 'medicines'
+            ORDER BY ordinal_position
         `);
-        
-        const existingColumns = checkResult.rows.map(r => r.column_name);
-        console.log('Existing columns:', existingColumns);
-        
-        // Add new columns if they don't exist
-        if (!existingColumns.includes('brand_name')) {
-            await pool.query('ALTER TABLE MEDICINES ADD COLUMN brand_name VARCHAR(100)');
-            console.log('Added brand_name column');
-        }
-        
-        if (!existingColumns.includes('salt_composition')) {
-            await pool.query('ALTER TABLE MEDICINES ADD COLUMN salt_composition VARCHAR(200)');
-            console.log('Added salt_composition column');
-        }
-        
-        if (!existingColumns.includes('dosage_form')) {
-            await pool.query('ALTER TABLE MEDICINES ADD COLUMN dosage_form VARCHAR(50)');
-            console.log('Added dosage_form column');
-        }
-        
-        if (!existingColumns.includes('strength')) {
-            await pool.query('ALTER TABLE MEDICINES ADD COLUMN strength VARCHAR(50)');
-            console.log('Added strength column');
-        }
-        
-        // Rename name to medicine_name if needed
-        if (existingColumns.includes('name') && !existingColumns.includes('medicine_name')) {
-            await pool.query('ALTER TABLE MEDICINES RENAME COLUMN name TO medicine_name');
-            console.log('Renamed name to medicine_name');
-        }
-        
-        if (existingColumns.includes('category') && !existingColumns.includes('medicine_category')) {
-            await pool.query('ALTER TABLE MEDICINES RENAME COLUMN category TO medicine_category');
-            console.log('Renamed category to medicine_category');
-        }
-        
+        console.log('Current MEDICINES columns:', checkResult.rows.map(r => r.column_name));
         console.log('Migration completed successfully!');
-        
     } catch (error) {
-        console.error('Migration error:', error.message);
+        console.error('Migration error:', error.message, error.stack);
     } finally {
         process.exit();
     }

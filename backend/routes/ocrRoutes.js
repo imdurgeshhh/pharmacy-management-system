@@ -1,18 +1,20 @@
+'use strict';
+
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const ocrController = require('../controllers/ocrController');
+const { upload, verifyMagicBytes } = require('../middleware/uploadSafety');
+const { authenticateToken } = require('../middleware/auth');
+const { requireBusinessAccess } = require('../middleware/roleCheck');
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'uploads/')
-    },
-    filename: function (req, file, cb) {
-        cb(null, Date.now() + '-' + file.originalname)
-    }
-});
-const upload = multer({ storage: storage });
-
-router.post('/scan', upload.single('invoice'), ocrController.scanInvoice);
+// POST /api/ocr/scan — Secure OCR invoice processing
+router.post(
+  '/scan',
+  authenticateToken,
+  requireBusinessAccess,
+  upload.single('invoice'),
+  verifyMagicBytes,
+  ocrController.scanInvoice
+);
 
 module.exports = router;

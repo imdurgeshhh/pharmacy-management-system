@@ -4,6 +4,8 @@ import {
   PackagePlus, Save, Plus, Trash2, Edit3, Check, X,
   Building2, Hash, Calendar, ChevronDown, Search, ClipboardList, CheckCircle2
 } from 'lucide-react';
+import PurchaseItemsTable from '../components/purchases/PurchaseItemsTable';
+import { SCHEDULE_CONFIG, SCHEDULE_OPTIONS } from '../utils/scheduleConfig';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const GST_RATES = [0, 5, 12, 18, 28];
@@ -24,17 +26,19 @@ const compute = (r) => {
 // ─── Input styles ─────────────────────────────────────────────────────────────
 const iCls = [
   'w-full px-3 py-2 text-sm rounded-xl border border-gray-200 bg-white',
-  'focus:outline-none focus:ring-2 focus:ring-green-400 focus:border-green-400',
-  'transition-all placeholder-gray-400'
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:border-green-500',
+  'transition-[border-color,box-shadow] placeholder-gray-400'
 ].join(' ');
 
 const roiCls = [
   'w-full px-3 py-2 text-sm rounded-xl border border-gray-100',
-  'bg-amber-50 text-amber-700 font-mono text-right cursor-not-allowed select-none'
+  'bg-amber-50 text-amber-700 font-mono text-right cursor-not-allowed select-none tabular-nums'
 ].join(' ');
 
 // ─── Small Label ──────────────────────────────────────────────────────────────
-const L = ({ t }) => <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{t}</label>;
+const L = ({ t, htmlFor }) => (
+  <label htmlFor={htmlFor} className="block text-xs font-bold text-gray-800 uppercase tracking-wider mb-1">{t}</label>
+);
 
 // ─── Click-outside hook ───────────────────────────────────────────────────────
 function useClickOutside(cb) {
@@ -48,9 +52,10 @@ function useClickOutside(cb) {
 }
 
 // ─── Supplier dropdown ────────────────────────────────────────────────────────
-function SupplierSelect({ suppliers, value, onSelect }) {
+function SupplierSelect({ suppliers, value, onSelect, btnId }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [activeIdx, setActiveIdx] = useState(-1);
   const ref = useClickOutside(() => setOpen(false));
 
   const filtered = suppliers.filter(s =>
@@ -59,35 +64,71 @@ function SupplierSelect({ suppliers, value, onSelect }) {
 
   const selected = suppliers.find(s => s.id === value);
 
+  useEffect(() => {
+    if (!open) return;
+    setActiveIdx(-1);
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        document.getElementById(btnId)?.focus();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveIdx(prev => (prev + 1 < filtered.length ? prev + 1 : 0));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveIdx(prev => (prev - 1 >= 0 ? prev - 1 : filtered.length - 1));
+      } else if (e.key === 'Enter') {
+        if (activeIdx >= 0 && filtered[activeIdx]) {
+          e.preventDefault();
+          onSelect(filtered[activeIdx]);
+          setOpen(false);
+          setQ('');
+          document.getElementById(btnId)?.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, filtered, activeIdx, btnId, onSelect]);
+
   return (
     <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen(v => !v)}
-        className={`${iCls} flex items-center justify-between cursor-pointer`}>
-        <span className={selected ? 'text-gray-800 font-medium' : 'text-gray-400'}>
+      <button id={btnId} type="button" onClick={() => setOpen(v => !v)}
+        aria-label="Choose supplier"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`${iCls} flex items-center justify-between cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2`}>
+        <span className={selected ? 'text-gray-900 font-semibold' : 'text-gray-700 font-normal'}>
           {selected ? selected.name : 'Choose supplier…'}
         </span>
-        <ChevronDown size={14} className="text-gray-400 shrink-0" />
+        <ChevronDown size={14} className="text-gray-600 shrink-0" aria-hidden="true" />
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-green-200 rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-green-200 rounded-xl shadow-xl overflow-hidden" role="listbox">
           <div className="p-2 border-b border-gray-100">
             <div className="relative">
-              <Search size={12} className="absolute left-2.5 top-2 text-gray-400" />
-              <input autoFocus value={q} onChange={e => setQ(e.target.value)}
-                placeholder="Search…"
-                className="w-full pl-7 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-green-400" />
+              <Search size={12} className="absolute left-2.5 top-2 text-gray-500" aria-hidden="true" />
+              <input autoFocus value={q} onChange={e => { setQ(e.target.value); setActiveIdx(-1); }}
+                autoComplete="off" spellCheck={false}
+                placeholder="Search supplier…"
+                aria-label="Search supplier"
+                className="w-full pl-7 pr-3 py-1.5 text-xs rounded-lg border border-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 text-gray-800" />
             </div>
           </div>
           <div className="max-h-44 overflow-y-auto">
             {filtered.length === 0
-              ? <p className="text-center text-xs text-gray-400 py-3">No suppliers found</p>
-              : filtered.map(s => (
-                  <button key={s.id} type="button"
+              ? <p className="text-center text-xs text-gray-500 py-3">No suppliers found</p>
+              : filtered.map((s, idx) => (
+                  <button key={s.id} type="button" role="option"
+                    aria-selected={s.id === value}
                     onMouseDown={() => { onSelect(s); setOpen(false); setQ(''); }}
-                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-green-50 border-b border-gray-50 last:border-0 ${s.id === value ? 'font-bold text-green-700' : 'text-gray-700'}`}>
+                    onClick={() => { onSelect(s); setOpen(false); setQ(''); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-green-50 border-b border-gray-50 last:border-0 focus-visible:outline-none focus-visible:bg-green-100 ${
+                      idx === activeIdx ? 'bg-green-100/80 ring-1 ring-inset ring-green-500' : ''
+                    } ${s.id === value ? 'font-bold text-green-800' : 'text-gray-800'}`}>
                     {s.name}
-                    {s.phone ? <span className="block text-xs text-gray-400 font-normal">{s.phone}</span> : null}
+                    {s.phone ? <span className="block text-xs text-gray-600 font-normal tabular-nums">{s.phone}</span> : null}
                   </button>
                 ))
             }
@@ -99,29 +140,66 @@ function SupplierSelect({ suppliers, value, onSelect }) {
 }
 
 // ─── Medicine autocomplete input ──────────────────────────────────────────────
-function MedicinePicker({ value, onChange, medicines, onSelect }) {
+function MedicinePicker({ value, onChange, medicines, onSelect, inputId }) {
   const [open, setOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
   const ref = useClickOutside(() => setOpen(false));
 
   const hits = value.trim().length > 0
     ? medicines.filter(m => m.label.toLowerCase().includes(value.toLowerCase())).slice(0, 7)
     : [];
 
+  const handleKeyDown = (e) => {
+    if (!open || hits.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIdx(prev => (prev + 1 < hits.length ? prev + 1 : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIdx(prev => (prev - 1 >= 0 ? prev - 1 : hits.length - 1));
+    } else if (e.key === 'Enter') {
+      if (activeIdx >= 0 && hits[activeIdx]) {
+        e.preventDefault();
+        onSelect(hits[activeIdx]);
+        setOpen(false);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
   return (
     <div className="relative" ref={ref}>
-      <input value={value}
-        onChange={e => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
+      <input
+        id={inputId}
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); setActiveIdx(-1); }}
+        onFocus={() => { setOpen(true); setActiveIdx(-1); }}
+        onKeyDown={handleKeyDown}
         placeholder="Type medicine name…"
-        className={iCls} />
+        aria-label="Medicine name"
+        aria-autocomplete="list"
+        aria-expanded={open && hits.length > 0}
+        role="combobox"
+        className={iCls}
+      />
       {open && hits.length > 0 && (
-        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-green-200 rounded-xl shadow-xl overflow-hidden max-h-44 overflow-y-auto">
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-green-200 rounded-xl shadow-xl overflow-hidden max-h-44 overflow-y-auto" role="listbox">
           {hits.map((m, i) => (
-            <button key={i} type="button"
+            <button key={i} type="button" role="option"
+              aria-selected={i === activeIdx}
               onMouseDown={() => { onSelect(m); setOpen(false); }}
-              className="w-full text-left px-4 py-2.5 text-sm hover:bg-green-50 border-b border-gray-50 last:border-0 text-gray-800 font-medium">
-              {m.label}
-              {m.mrp ? <span className="ml-2 text-xs text-green-600 font-bold">{rupee(m.mrp)}</span> : null}
+              onClick={() => { onSelect(m); setOpen(false); }}
+              className={`w-full text-left px-4 py-2.5 text-sm hover:bg-green-50 border-b border-gray-50 last:border-0 text-gray-800 font-medium flex items-center justify-between ${
+                i === activeIdx ? 'bg-green-100/80 ring-1 ring-inset ring-green-500' : ''
+              }`}>
+              <div>
+                <span>{m.label}</span>
+                {m.mrp ? <span className="ml-2 text-xs text-green-800 font-bold">{rupee(m.mrp)}</span> : null}
+              </div>
+              <span className="text-[10px] uppercase font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full border border-gray-200">
+                {m.schedule || 'OTC'}
+              </span>
             </button>
           ))}
         </div>
@@ -133,9 +211,9 @@ function MedicinePicker({ value, onChange, medicines, onSelect }) {
 // ─── Green section card ───────────────────────────────────────────────────────
 const Section = ({ icon, title, right, children }) => (
   <div className="rounded-2xl bg-white border border-green-100 shadow-md overflow-hidden">
-    <div className="px-6 py-3.5 bg-gradient-to-r from-green-700 to-green-500 flex items-center justify-between">
+    <div className="px-6 py-3.5 bg-gradient-to-r from-green-800 to-green-700 flex items-center justify-between">
       <div className="flex items-center gap-2.5">
-        <span className="text-green-200">{icon}</span>
+        <span className="text-green-100">{icon}</span>
         <h2 className="text-sm font-bold text-white tracking-wide">{title}</h2>
       </div>
       {right}
@@ -153,12 +231,8 @@ export default function Purchases() {
   const [suppliers, setSuppliers] = useState([]);
   const [medicines, setMedicines] = useState([]);
 
-  useEffect(() => {
-    api.get('/suppliers')
-      .then(r => setSuppliers(Array.isArray(r.data) ? r.data : []))
-      .catch(() => setSuppliers([]));
-
-    // Inventory endpoint returns medicine data joined with stock
+  const loadMedicines = () => {
+    // Inventory endpoint returns medicine data joined with stock and schedule
     api.get('/inventory')
       .then(r => {
         const data = Array.isArray(r.data) ? r.data : [];
@@ -167,9 +241,19 @@ export default function Purchases() {
           // Live DB uses `name`; inventoryController join may alias it differently
           label: m.name || m.medicine_name || m.label || '',
           mrp: parseFloat(m.mrp) || 0,
+          schedule: (m.schedule || 'NONE').toUpperCase(),
         })).filter(m => m.label));
       })
       .catch(() => setMedicines([]));
+  };
+
+  useEffect(() => {
+    document.title = 'Purchases & Stock In — Pharma';
+    api.get('/suppliers')
+      .then(r => setSuppliers(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setSuppliers([]));
+
+    loadMedicines();
   }, []);
 
   // ── Supplier section ───────────────────────────────────────────────────────
@@ -191,28 +275,99 @@ export default function Purchases() {
     batch_number: '', expiry_date: '',
     qty: '', price: '',
     gst_pct: 12, disc_pct: '',
+    schedule: '',
+    is_new: true,
   });
 
   const [form, setForm]     = useState(blank());
   const [editIdx, setEditIdx] = useState(null);
+  const [formValidationMsg, setFormValidationMsg] = useState('');
 
-  const sf = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const sf = (k, v) => {
+    setForm(p => ({ ...p, [k]: v }));
+    setFormValidationMsg('');
+  };
 
   const pickMed = (m) => {
-    sf('medicine_name', m.label);
-    sf('medicine_id', m.id);
-    if (m.mrp) sf('price', String(m.mrp));
+    setForm(p => ({
+      ...p,
+      medicine_name: m.label,
+      medicine_id: m.id,
+      schedule: m.schedule || 'NONE',
+      is_new: false,
+      price: m.mrp ? String(m.mrp) : p.price
+    }));
+    setFormValidationMsg('');
+  };
+
+  const handleMedNameChange = (val) => {
+    setFormValidationMsg('');
+    const match = medicines.find(m => m.label.trim().toLowerCase() === val.trim().toLowerCase());
+    if (match) {
+      setForm(p => ({
+        ...p,
+        medicine_name: val,
+        medicine_id: match.id,
+        schedule: match.schedule || 'NONE',
+        is_new: false,
+        price: p.price || (match.mrp ? String(match.mrp) : p.price)
+      }));
+    } else {
+      setForm(p => ({
+        ...p,
+        medicine_name: val,
+        medicine_id: null,
+        schedule: p.medicine_id ? '' : p.schedule,
+        is_new: true
+      }));
+    }
   };
 
   const cForm = compute(form);
-  const canAdd = form.medicine_name.trim() && form.batch_number.trim() && form.qty && form.price;
+  const canAdd = Boolean(
+    form.medicine_name.trim() &&
+    form.batch_number.trim() &&
+    form.qty &&
+    form.price &&
+    (!form.is_new || form.schedule)
+  );
 
   // ── Entries list ───────────────────────────────────────────────────────────
   const [entries, setEntries] = useState([]);
 
   const addOrUpdate = () => {
-    if (!canAdd) return;
-    const row = compute(form);
+    if (!form.medicine_name.trim()) {
+      setFormValidationMsg('Please enter or select a medicine name.');
+      document.getElementById('med-name')?.focus();
+      return;
+    }
+    if (form.is_new && !form.schedule) {
+      setFormValidationMsg('Please select a drug schedule for this new medicine.');
+      document.getElementById('med-schedule')?.focus();
+      return;
+    }
+    if (!form.batch_number.trim()) {
+      setFormValidationMsg('Please enter a batch number.');
+      document.getElementById('med-batch')?.focus();
+      return;
+    }
+    if (!form.qty || parseFloat(form.qty) <= 0) {
+      setFormValidationMsg('Please enter a valid quantity greater than zero.');
+      document.getElementById('med-qty')?.focus();
+      return;
+    }
+    if (!form.price || parseFloat(form.price) <= 0) {
+      setFormValidationMsg('Please enter a valid purchase price.');
+      document.getElementById('med-price')?.focus();
+      return;
+    }
+
+    setFormValidationMsg('');
+    const row = {
+      ...compute(form),
+      schedule: form.schedule || 'NONE',
+      is_new: form.is_new
+    };
     if (editIdx !== null) {
       setEntries(p => p.map((e, i) => i === editIdx ? row : e));
       setEditIdx(null);
@@ -222,11 +377,19 @@ export default function Purchases() {
     setForm(blank());
   };
 
-  const startEdit = (idx) => { setForm({ ...entries[idx] }); setEditIdx(idx); };
+  const startEdit = (idx) => {
+    setForm({ ...entries[idx] });
+    setEditIdx(idx);
+    setFormValidationMsg('');
+  };
+
   const deleteRow = (idx) => {
-    if (!window.confirm('Remove this entry?')) return;
     setEntries(p => p.filter((_, i) => i !== idx));
-    if (editIdx === idx) { setForm(blank()); setEditIdx(null); }
+    if (editIdx === idx) {
+      setForm(blank());
+      setEditIdx(null);
+      setFormValidationMsg('');
+    }
   };
 
   // ── Save ───────────────────────────────────────────────────────────────────
@@ -247,6 +410,7 @@ export default function Purchases() {
         items: entries.map(e => ({
           medicine_id:    e.medicine_id ? parseInt(e.medicine_id) : null,
           medicine_name:  e.medicine_name,
+          schedule:       e.schedule || 'NONE',
           batch_number:   e.batch_number,
           qty:            parseFloat(e.qty),
           price:          parseFloat(e.final),
@@ -261,6 +425,7 @@ export default function Purchases() {
       setEntries([]); setForm(blank()); setEditIdx(null);
       setSupplierId(null); setSuppGst(''); setInvoiceNo('');
       setInvoiceDate(todayStr()); setSuppConfirmed(false);
+      loadMedicines(); // Refresh medicines list with any newly added medicine
     } catch (err) {
       alert('Save failed: ' + (err?.response?.data?.error || err.message));
     } finally {
@@ -274,12 +439,12 @@ export default function Purchases() {
 
       {/* Page header */}
       <div className="flex items-center gap-3">
-        <span className="inline-flex w-10 h-10 items-center justify-center rounded-xl bg-gradient-to-br from-green-700 to-green-500 shadow-lg shrink-0">
-          <PackagePlus size={20} className="text-white" />
+        <span className="inline-flex w-10 h-10 items-center justify-center rounded-xl bg-gradient-to-br from-green-800 to-green-600 shadow-lg shrink-0">
+          <PackagePlus size={20} className="text-white" aria-hidden="true" />
         </span>
         <div>
-          <h1 className="text-2xl font-bold text-gray-800 tracking-tight">Stock In Entry</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Record medicines received from suppliers. Stock updates automatically.</p>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Stock In Entry</h1>
+          <p className="text-sm text-gray-700 mt-0.5">Record medicines received from suppliers. Stock updates automatically.</p>
         </div>
       </div>
 
@@ -287,257 +452,253 @@ export default function Purchases() {
       <div className="rounded-2xl bg-white border border-green-100 shadow-md overflow-hidden">
 
         {/* Shared header */}
-        <div className="px-6 py-3.5 bg-gradient-to-r from-green-700 to-green-500 flex items-center justify-between">
+        <div className="px-6 py-3.5 bg-gradient-to-r from-green-800 to-green-700 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <span className="text-green-200"><PackagePlus size={17} /></span>
+            <span className="text-green-100"><PackagePlus size={17} aria-hidden="true" /></span>
             <h2 className="text-sm font-bold text-white tracking-wide">Stock Entry Form</h2>
           </div>
           {editIdx !== null && (
-            <button onClick={() => { setForm(blank()); setEditIdx(null); }}
-              className="flex items-center gap-1 text-xs text-white/80 hover:text-white transition-colors">
-              <X size={13} /> Cancel Edit
+            <button
+              type="button"
+              onClick={() => { setForm(blank()); setEditIdx(null); setFormValidationMsg(''); }}
+              className="flex items-center gap-1 text-xs text-white/90 hover:text-white transition-colors focus-visible:outline-none focus-visible:underline">
+              <X size={13} aria-hidden="true" /> Cancel Edit
             </button>
           )}
         </div>
 
         {/* ── Step 1: Supplier Details ── */}
-        <div className="px-6 pt-5 pb-4">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-600 text-white text-[10px] font-bold shrink-0">1</span>
-            <div className="flex items-center gap-2">
-              <Building2 size={14} className="text-green-600" />
-              <span className="text-xs font-bold text-gray-600 uppercase tracking-wider">Supplier Details</span>
-            </div>
-            {suppConfirmed && (
-              <span className="ml-auto flex items-center gap-1 text-[10px] bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-bold">
-                <CheckCircle2 size={10} /> Confirmed
-              </span>
-            )}
-          </div>
+        <div className="p-6 pb-4">
+          <fieldset className="border border-green-200/80 rounded-2xl p-4 sm:p-5 bg-green-50/20 space-y-4">
+            <legend className="px-3 py-1 text-xs font-bold uppercase tracking-wider text-green-950 bg-white rounded-xl border border-green-200 shadow-sm flex items-center gap-2">
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-800 text-white text-[10px] font-bold shrink-0">1</span>
+              <Building2 size={15} className="text-green-800" aria-hidden="true" />
+              <span>Supplier &amp; Invoice Details</span>
+              {suppConfirmed && (
+                <span className="ml-2 inline-flex items-center gap-1 text-[10px] bg-green-100 text-green-900 border border-green-300 px-2 py-0.5 rounded-full font-bold">
+                  <CheckCircle2 size={10} aria-hidden="true" /> Confirmed
+                </span>
+              )}
+            </legend>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <L t="Supplier Name *" />
-              <SupplierSelect suppliers={suppliers} value={supplierId} onSelect={handlePickSupplier} />
-            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
+              <div>
+                <L t="Supplier Name *" htmlFor="supp-select-btn" />
+                <SupplierSelect suppliers={suppliers} value={supplierId} onSelect={handlePickSupplier} btnId="supp-select-btn" />
+              </div>
 
-            <div>
-              <L t="GST Number" />
-              <input value={suppGst} onChange={e => setSuppGst(e.target.value.toUpperCase())}
-                placeholder="Auto-filled / editable" maxLength={15}
-                className={`${iCls} font-mono uppercase tracking-widest`} />
-            </div>
+              <div>
+                <L t="GST Number" htmlFor="supp-gst" />
+                <input id="supp-gst" value={suppGst} onChange={e => setSuppGst(e.target.value.toUpperCase())}
+                  placeholder="Auto-filled / editable" maxLength={15}
+                  aria-label="Supplier GST number"
+                  className={`${iCls} font-mono uppercase tracking-widest`} />
+              </div>
 
-            <div>
-              <L t="Invoice Number" />
-              <div className="relative">
-                <Hash size={13} className="absolute left-3 top-2.5 text-gray-400" />
-                <input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)}
-                  placeholder="INV-2024-001" className={`${iCls} pl-8`} />
+              <div>
+                <L t="Invoice Number" htmlFor="supp-invoice-no" />
+                <div className="relative">
+                  <Hash size={13} className="absolute left-3 top-2.5 text-gray-500" aria-hidden="true" />
+                  <input id="supp-invoice-no" value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)}
+                    placeholder="INV-2024-001" aria-label="Invoice number" className={`${iCls} pl-8`} />
+                </div>
+              </div>
+
+              <div>
+                <L t="Invoice Date" htmlFor="supp-invoice-date" />
+                <div className="relative">
+                  <Calendar size={13} className="absolute left-3 top-2.5 text-gray-500" aria-hidden="true" />
+                  <input id="supp-invoice-date" type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)}
+                    aria-label="Invoice date" className={`${iCls} pl-8`} />
+                </div>
               </div>
             </div>
 
-            <div>
-              <L t="Invoice Date" />
-              <div className="relative">
-                <Calendar size={13} className="absolute left-3 top-2.5 text-gray-400" />
-                <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)}
-                  className={`${iCls} pl-8`} />
-              </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!supplierId) { alert('Please select a supplier first'); return; }
+                  setSuppConfirmed(true);
+                }}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-800 text-white text-sm font-semibold shadow-sm active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2">
+                <Check size={15} aria-hidden="true" /> Confirm Supplier
+              </button>
             </div>
-          </div>
-
-          <div className="mt-4 flex justify-end">
-            <button
-              onClick={() => {
-                if (!supplierId) { alert('Please select a supplier first'); return; }
-                setSuppConfirmed(true);
-              }}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 shadow-sm active:scale-95 transition-all">
-              <Check size={15} /> Confirm Supplier
-            </button>
-          </div>
+          </fieldset>
         </div>
 
         {/* Divider */}
         <div className="mx-6 border-t border-dashed border-green-100" />
 
         {/* ── Step 2: Add Medicine Entry ── */}
-        <div className="px-6 pt-4 pb-5 space-y-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-600 text-white text-[10px] font-bold shrink-0">2</span>
-            <div className="flex items-center gap-2">
-              <Plus size={14} className="text-green-600" />
-              <span className="text-xs font-bold text-gray-600 uppercase tracking-wider">
-                {editIdx !== null ? `Editing Entry #${editIdx + 1}` : 'Add Medicine Entry'}
-              </span>
-            </div>
-          </div>
+        <div className="p-6 pt-2 pb-5 space-y-4">
+          <fieldset className="border border-green-200/80 rounded-2xl p-4 sm:p-5 bg-green-50/20 space-y-4">
+            <legend className="px-3 py-1 text-xs font-bold uppercase tracking-wider text-green-950 bg-white rounded-xl border border-green-200 shadow-sm flex items-center gap-2">
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-800 text-white text-[10px] font-bold shrink-0" aria-hidden="true">2</span>
+              <Plus size={15} className="text-green-800" aria-hidden="true" />
+              <span>{editIdx !== null ? `Editing Entry #${editIdx + 1}` : 'Medicine Item Entry'}</span>
+            </legend>
 
-          {/* Row 1: name, batch, expiry */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-1">
-              <L t="Medicine Name *" />
-              <MedicinePicker
-                value={form.medicine_name}
-                onChange={v => sf('medicine_name', v)}
-                medicines={medicines}
-                onSelect={pickMed}
-              />
-            </div>
-            <div>
-              <L t="Batch Number *" />
-              <input value={form.batch_number} onChange={e => sf('batch_number', e.target.value)}
-                placeholder="e.g. B-2024-001" className={`${iCls} font-mono uppercase`} />
-            </div>
-            <div>
-              <L t="Expiry Date" />
-              <input type="date" value={form.expiry_date} onChange={e => sf('expiry_date', e.target.value)}
-                className={iCls} />
-            </div>
-          </div>
+            {/* Row 1: name, schedule, batch, expiry */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
+              <div>
+                <L t="Medicine Name *" htmlFor="med-name" />
+                <MedicinePicker
+                  inputId="med-name"
+                  value={form.medicine_name}
+                  onChange={handleMedNameChange}
+                  medicines={medicines}
+                  onSelect={pickMed}
+                />
+                {!form.is_new && (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Catalog:</span>
+                    {(() => {
+                      const conf = SCHEDULE_CONFIG[form.schedule] || SCHEDULE_CONFIG.NONE;
+                      return (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border ${conf.badgeClass}`} title={conf.description}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${conf.dotClass}`} aria-hidden="true" />
+                          {conf.label}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
 
-          {/* Row 2: qty, price, gst%, tax, disc%, disc */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div>
-              <L t="Qty *" />
-              <input type="number" min="1" value={form.qty} onChange={e => sf('qty', e.target.value)}
-                placeholder="0" className={`${iCls} text-center font-bold`} />
-            </div>
-            <div>
-              <L t="Purchase Price *" />
-              <input type="number" step="0.01" min="0" value={form.price} onChange={e => sf('price', e.target.value)}
-                placeholder="0.00" className={iCls} />
-            </div>
-            <div>
-              <L t="GST %" />
-              <select value={form.gst_pct} onChange={e => sf('gst_pct', e.target.value)}
-                className={`${iCls} cursor-pointer`}>
-                {GST_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
-              </select>
-            </div>
-            <div>
-              <L t="Tax Amount" />
-              <input readOnly value={rupee(cForm.tax_amt)} className={roiCls} />
-            </div>
-            <div>
-              <L t="Disc %" />
-              <input type="number" min="0" max="100" step="0.1" value={form.disc_pct}
-                onChange={e => sf('disc_pct', e.target.value)}
-                placeholder="0" className={`${iCls} text-center`} />
-            </div>
-            <div>
-              <L t="Disc Amount" />
-              <input readOnly value={rupee(cForm.disc_amt)} className={roiCls} />
-            </div>
-          </div>
+              <div>
+                <L t="Drug Schedule *" htmlFor="med-schedule" />
+                {!form.is_new ? (
+                  <div className={`${iCls} bg-gray-50 text-gray-700 flex items-center justify-between cursor-not-allowed select-none`}>
+                    <span className="font-medium">{(SCHEDULE_CONFIG[form.schedule] || SCHEDULE_CONFIG.NONE).label}</span>
+                    <span className="text-[10px] uppercase font-bold text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">Catalog</span>
+                  </div>
+                ) : (
+                  <select
+                    id="med-schedule"
+                    value={form.schedule}
+                    onChange={e => sf('schedule', e.target.value)}
+                    className={`${iCls} cursor-pointer font-medium ${!form.schedule ? 'border-amber-300 bg-amber-50/20' : ''}`}
+                    aria-label="Drug Schedule"
+                    required
+                  >
+                    <option value="">Select Schedule *</option>
+                    {SCHEDULE_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                )}
+                {form.is_new && form.medicine_name.trim() && !form.schedule && (
+                  <p className="text-[11px] text-amber-700 mt-1 font-semibold flex items-center gap-1">
+                    <span>* Required for new medicine</span>
+                  </p>
+                )}
+              </div>
 
-          {/* Final price + Add button */}
-          <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Final Price:</span>
-              <span className="text-2xl font-bold text-green-700">{rupee(cForm.final)}</span>
-              {form.qty > 0 && (
-                <span className="text-xs text-gray-400">
-                  × {form.qty} = {rupee(cForm.final * (parseFloat(form.qty) || 0))}
-                </span>
-              )}
+              <div>
+                <L t="Batch Number *" htmlFor="med-batch" />
+                <input id="med-batch" value={form.batch_number} onChange={e => sf('batch_number', e.target.value)}
+                  placeholder="e.g. B-2024-001" aria-label="Batch number" className={`${iCls} font-mono uppercase`} />
+              </div>
+
+              <div>
+                <L t="Expiry Date" htmlFor="med-expiry" />
+                <input id="med-expiry" type="date" value={form.expiry_date} onChange={e => sf('expiry_date', e.target.value)}
+                  aria-label="Expiry date" className={iCls} />
+              </div>
             </div>
-            <button onClick={addOrUpdate} disabled={!canAdd}
-              className={[
-                'ml-auto flex items-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm transition-all active:scale-95',
-                canAdd
-                  ? 'bg-green-600 text-white hover:bg-green-700 shadow-md shadow-green-200'
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              ].join(' ')}>
-              <Plus size={16} />
-              {editIdx !== null ? 'Update Entry' : 'Add to List'}
-            </button>
-          </div>
+
+            {/* Row 2: qty, price, gst%, tax, disc%, disc */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div>
+                <L t="Qty *" htmlFor="med-qty" />
+                <input id="med-qty" type="number" min="1" value={form.qty} onChange={e => sf('qty', e.target.value)}
+                  placeholder="0" aria-label="Quantity" className={`${iCls} text-center font-bold`} />
+              </div>
+              <div>
+                <L t="Purchase Price *" htmlFor="med-price" />
+                <input id="med-price" type="number" step="0.01" min="0" value={form.price} onChange={e => sf('price', e.target.value)}
+                  placeholder="0.00" aria-label="Purchase price" className={iCls} />
+              </div>
+              <div>
+                <L t="GST %" htmlFor="med-gst" />
+                <select id="med-gst" value={form.gst_pct} onChange={e => sf('gst_pct', e.target.value)}
+                  aria-label="GST percentage"
+                  className={`${iCls} cursor-pointer`}>
+                  {GST_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
+                </select>
+              </div>
+              <div>
+                <L t="Tax Amount" htmlFor="med-tax" />
+                <input id="med-tax" readOnly value={rupee(cForm.tax_amt)} aria-label="Calculated tax amount" aria-readonly="true" className={roiCls} />
+              </div>
+              <div>
+                <L t="Disc %" htmlFor="med-disc" />
+                <input id="med-disc" type="number" min="0" max="100" step="0.1" value={form.disc_pct}
+                  onChange={e => sf('disc_pct', e.target.value)}
+                  placeholder="0" aria-label="Discount percentage" className={`${iCls} text-center`} />
+              </div>
+              <div>
+                <L t="Disc Amount" htmlFor="med-disc-amt" />
+                <input id="med-disc-amt" readOnly value={rupee(cForm.disc_amt)} aria-label="Calculated discount amount" aria-readonly="true" className={roiCls} />
+              </div>
+            </div>
+
+            {/* Validation Message if any */}
+            {formValidationMsg && (
+              <div role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 p-2.5 rounded-xl font-medium flex items-center gap-1.5">
+                <span>⚠️ {formValidationMsg}</span>
+              </div>
+            )}
+
+            {/* Final price + Add button */}
+            <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">Final Price:</span>
+                <span className="text-2xl font-bold text-green-800">{rupee(cForm.final)}</span>
+                {form.qty > 0 && (
+                  <span className="text-xs text-gray-700 font-medium">
+                    × {form.qty} = {rupee(cForm.final * (parseFloat(form.qty) || 0))}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={addOrUpdate}
+                disabled={!canAdd}
+                aria-disabled={!canAdd}
+                className={[
+                  'ml-auto flex items-center gap-2 px-6 py-2.5 min-h-[44px] rounded-xl font-semibold text-sm transition-[background-color,transform] duration-200 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2',
+                  canAdd
+                    ? 'bg-green-700 text-white hover:bg-green-800 shadow-md shadow-green-200'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                ].join(' ')}>
+                <Plus size={16} aria-hidden="true" />
+                {editIdx !== null ? 'Update Entry' : 'Add to List'}
+              </button>
+            </div>
+          </fieldset>
         </div>
 
       </div>
 
       {/* ── 3. Stock Entry List ───────────────────────────────────────────── */}
-      <Section
-        icon={<ClipboardList size={17} />}
-        title={`Stock Entry List${entries.length > 0 ? ` (${entries.length})` : ''}`}
-      >
-        {entries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-14 text-gray-300">
-            <ClipboardList size={44} className="mb-3 opacity-40" />
-            <p className="text-sm text-gray-400">No entries yet — add medicines above.</p>
-          </div>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left" style={{ minWidth: 900 }}>
-                <thead className="bg-green-50 border-b border-green-100 text-green-800 uppercase tracking-wider font-bold">
-                  <tr>
-                    {['#', 'Medicine', 'Batch', 'Expiry', 'Qty', 'Price', 'GST%', 'Tax', 'Disc%', 'Disc', 'Final', ''].map(h => (
-                      <th key={h} className="px-3 py-3 whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-green-50">
-                  {entries.map((e, i) => (
-                    <tr key={i} className={`transition-colors ${editIdx === i ? 'bg-amber-50' : 'hover:bg-green-50/40'}`}>
-                      <td className="px-3 py-2.5 text-gray-400 font-mono">{i + 1}</td>
-                      <td className="px-3 py-2.5 font-semibold text-gray-800 max-w-[140px] truncate">{e.medicine_name}</td>
-                      <td className="px-3 py-2.5 font-mono uppercase text-gray-600">{e.batch_number}</td>
-                      <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">
-                        {e.expiry_date
-                          ? new Date(e.expiry_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'2-digit' })
-                          : '—'}
-                      </td>
-                      <td className="px-3 py-2.5 text-center font-bold text-gray-800">{e.qty}</td>
-                      <td className="px-3 py-2.5 font-mono text-gray-700">{rupee(e.price)}</td>
-                      <td className="px-3 py-2.5 text-center">
-                        <span className="bg-orange-50 text-orange-700 border border-orange-100 rounded-md px-1.5 py-0.5 font-semibold">{e.gst_pct}%</span>
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-orange-700">{rupee(e.tax_amt)}</td>
-                      <td className="px-3 py-2.5 text-center text-gray-600">{e.disc_pct ? `${e.disc_pct}%` : '—'}</td>
-                      <td className="px-3 py-2.5 font-mono text-blue-700">{rupee(e.disc_amt)}</td>
-                      <td className="px-3 py-2.5 font-bold text-green-700 font-mono">{rupee(e.final)}</td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex gap-1">
-                          <button onClick={() => startEdit(i)} title="Edit"
-                            className="p-1.5 rounded-lg bg-blue-50 text-blue-500 hover:bg-blue-100 transition-all">
-                            <Edit3 size={13} />
-                          </button>
-                          <button onClick={() => deleteRow(i)} title="Delete"
-                            className="p-1.5 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 transition-all">
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Bottom bar */}
-            <div className="px-6 py-4 border-t border-green-100 bg-green-50/30 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-gray-600">
-                <span className="font-bold text-gray-800">{entries.length}</span> medicine{entries.length > 1 ? 's' : ''} ·{' '}
-                Total qty: <span className="font-bold">{entries.reduce((s, e) => s + (parseFloat(e.qty) || 0), 0)}</span>
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => { if (window.confirm('Clear all entries?')) { setEntries([]); setForm(blank()); setEditIdx(null); } }}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border-2 border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 active:scale-95 transition-all">
-                  <Trash2 size={15} /> Clear All
-                </button>
-                <button onClick={handleSave} disabled={saving}
-                  className="flex items-center gap-1.5 px-6 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 shadow-md shadow-green-200 active:scale-95 transition-all disabled:opacity-60">
-                  <Save size={15} /> {saving ? 'Saving…' : 'Save Stock Entry'}
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-      </Section>
+      <PurchaseItemsTable
+        entries={entries}
+        editIdx={editIdx}
+        onStartEdit={startEdit}
+        onDeleteRow={deleteRow}
+        onClearAll={() => {
+          setEntries([]);
+          setForm(blank());
+          setEditIdx(null);
+          setFormValidationMsg('');
+        }}
+        onSave={handleSave}
+        saving={saving}
+        rupee={rupee}
+      />
 
     </div>
   );

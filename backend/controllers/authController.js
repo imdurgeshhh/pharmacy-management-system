@@ -1,185 +1,110 @@
 const { pool } = require('../config/db');
-const crypto = require('crypto');
 
-const getEmployeeColumns = async () => {
-  const result = await pool.query(`
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'employees'
-  `);
-
-  return new Set(result.rows.map((row) => row.column_name));
-};
-
-// Register new employee
-exports.register = async (req, res) => {
-  console.log('=== /api/auth/register HIT ===');
-  console.log('Body:', req.body);
-  
-  const { full_name, email, username, password, confirm_password, role } = req.body;
-  
-  try {
-    const employeeColumns = await getEmployeeColumns();
-    const nameColumn = employeeColumns.has('full_name') ? 'full_name' : 'name';
-    const hasEmailColumn = employeeColumns.has('email');
-
-    // Validation
-    if (!full_name || !email || !username || !password || !confirm_password || !role) {
-      return res.status(400).json({ error: 'All fields required: full_name, email, username, password, confirm_password, role' });
-    }
-    
-    if (password !== confirm_password) {
-      return res.status(400).json({ error: 'Passwords do not match' });
-    }
-    
-    const normalizedRole = role.toLowerCase();
-    if (!['admin', 'shopkeeper'].includes(normalizedRole)) {
-      return res.status(400).json({ error: 'Role must be "admin" or "shopkeeper"' });
-    }
-    
-    // Check duplicates
-    const duplicateParams = [username];
-    const duplicateConditions = ['username = $1'];
-
-    if (hasEmailColumn) {
-      duplicateParams.push(email);
-      duplicateConditions.push(`email = $${duplicateParams.length}`);
-    }
-
-    const existing = await pool.query(
-      `SELECT id FROM EMPLOYEES WHERE ${duplicateConditions.join(' OR ')}`,
-      duplicateParams
-    );
-
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: hasEmailColumn ? 'Username or email already exists' : 'Username already exists' });
-    }
-    
-    const insertColumns = [nameColumn, 'username', 'password', 'role'];
-    const insertValues = [full_name, username, password, normalizedRole];
-
-    if (hasEmailColumn) {
-      insertColumns.splice(1, 0, 'email');
-      insertValues.splice(1, 0, email);
-    }
-
-    const returningColumns = ['id', nameColumn, 'username', 'role'];
-    if (hasEmailColumn) {
-      returningColumns.splice(2, 0, 'email');
-    }
-
-    const placeholders = insertValues.map((_, index) => `$${index + 1}`);
-    const result = await pool.query(
-      `
-        INSERT INTO EMPLOYEES (${insertColumns.join(', ')})
-        VALUES (${placeholders.join(', ')})
-        RETURNING ${returningColumns.join(', ')}
-      `,
-      insertValues
-    );
-    
-    const user = result.rows[0];
-    const token = crypto.createHash('sha256').update(`${user.id}-${Date.now()}`).digest('base64').substring(0, 32);
-    
-    console.log('SUCCESS - Created user:', user.username);
-    
-    res.status(201).json({
-      message: 'Registration successful',
-      token,
-      user: {
-        id: user.id,
-        name: user.full_name || user.name,
-        email: user.email || email,
-        username: user.username,
-        role: user.role,
-        token
-      }
-    });
-    
-  } catch (error) {
-    console.error('REGISTER ERROR:', error);
-    res.status(500).json({ error: 'Registration failed: ' + error.message });
-  }
-};
-
-// Login
-exports.login = async (req, res) => {
-  console.log('=== /api/auth/login HIT ===');
-  
-  const { username, password } = req.body;
-  
-  try {
-    const result = await pool.query(
-      'SELECT id, full_name, username, password, role, email, employee_id, admin_id, is_active FROM employees WHERE username = $1',
-      [username]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-    
-    const user = result.rows[0];
-    if (user.password !== password) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    // Block inactive employees
-    if (user.role === 'employee' && user.is_active === false) {
-      return res.status(403).json({ error: 'Your account has been deactivated. Contact your administrator.' });
-    }
-    
-    const token = crypto.createHash('sha256').update(`${user.id}-${Date.now()}`).digest('base64').substring(0, 32);
-    
-    console.log('LOGIN SUCCESS:', user.username, '| Role:', user.role);
-    
-    res.json({
-      message: 'Login successful',
-      token,
-      user: {
-        id: user.id,
-        name: user.full_name || user.name,
-        email: user.email || null,
-        username: user.username,
-        role: user.role,
-        employee_id: user.employee_id || null,
-        admin_id: user.admin_id || null,
-        token
-      }
-    });
-    
-  } catch (error) {
-    console.error('LOGIN ERROR:', error);
-    res.status(500).json({ error: 'Login failed' });
-  }
-};
-
-// Get employees (admin only)
+// Get employees (used by admin dashboard) — strictly isolated to authenticated Admin
 exports.getEmployees = async (req, res) => {
   try {
-    const employeeColumns = await getEmployeeColumns();
-    const selectColumns = ['id'];
-
-    if (employeeColumns.has('full_name')) {
-      selectColumns.push('full_name AS name');
-    } else if (employeeColumns.has('name')) {
-      selectColumns.push('name');
-    }
-
-    selectColumns.push('username', 'role');
-
-    if (employeeColumns.has('email')) {
-      selectColumns.push('email');
-    }
-
-    if (employeeColumns.has('created_at')) {
-      selectColumns.push('created_at');
-    }
-
-    const result = await pool.query(`SELECT ${selectColumns.join(', ')} FROM EMPLOYEES ORDER BY id DESC`);
+    const adminId = req.user?.id || req.adminId;
+    const result = await pool.query(
+      `
+        SELECT id, COALESCE(full_name, name) AS name, username, role, email, employee_id, admin_id, is_active, created_at
+        FROM employees
+        WHERE admin_id = $1
+        ORDER BY id DESC
+      `,
+      [adminId]
+    );
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    console.error('GET EMPLOYEES ERROR:', error);
     res.status(500).json({ error: 'Failed to fetch employees' });
   }
 };
 
+// ---------------------------------------------------------------------------
+// Clerk Sync endpoint
+// Called by ClerkAuthSync in App.jsx after Clerk sign-in to provision/look up
+// the user in the local employees table and return their DB role.
+// ---------------------------------------------------------------------------
+exports.clerkSync = async (req, res) => {
+  const { email, full_name, username, clerk_id } = req.body;
+
+  if (!email || !username) {
+    return res.status(400).json({ error: 'email and username are required for Clerk sync' });
+  }
+
+  try {
+    const clerkUserId = clerk_id || req.auth?.userId || null;
+
+    // Check if user already exists by clerk_user_id, email, or username
+    const existingUser = await pool.query(
+      `
+        SELECT id, COALESCE(full_name, name) AS name, username, role, email, employee_id, admin_id, auth_provider, clerk_user_id
+        FROM employees
+        WHERE (clerk_user_id = $1 AND $1 IS NOT NULL)
+           OR LOWER(email) = LOWER($2) 
+           OR username = $3
+        LIMIT 1
+      `,
+      [clerkUserId, email, username]
+    );
+
+    if (existingUser.rows.length > 0) {
+      const user = existingUser.rows[0];
+
+      // Link clerk_user_id and update email if missing
+      if (!user.clerk_user_id && clerkUserId) {
+        try {
+          await pool.query(
+            `UPDATE employees 
+             SET clerk_user_id = $1, email = COALESCE(email, $2)
+             WHERE id = $3`,
+            [clerkUserId, email, user.id]
+          );
+          user.clerk_user_id = clerkUserId;
+        } catch (_) {}
+      }
+
+      return res.json({
+        message: 'Sync successful (existing user)',
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email || email,
+          username: user.username,
+          role: user.role,
+          employee_id: user.employee_id || null,
+          admin_id: user.admin_id || null,
+        }
+      });
+    }
+
+    // User does not exist — self-registering Admin via Clerk signup (Requirement 3)
+    const displayName = full_name || username;
+    const result = await pool.query(
+      `
+        INSERT INTO employees (name, full_name, email, username, password, role, auth_provider, clerk_user_id, is_active)
+        VALUES ($1, $1, $2, $3, NULL, 'admin', 'clerk', $4, TRUE)
+        RETURNING id, COALESCE(full_name, name) AS name, username, role, email, employee_id, admin_id
+      `,
+      [displayName, email, username, clerkUserId]
+    );
+    const newUser = result.rows[0];
+
+    res.status(201).json({
+      message: 'Sync successful (new admin created)',
+      user: {
+        id: newUser.id,
+        name: newUser.name,
+        email: newUser.email || email,
+        username: newUser.username,
+        role: newUser.role,
+        employee_id: null,
+        admin_id: null,
+      }
+    });
+
+  } catch (error) {
+    console.error('CLERK SYNC ERROR:', error);
+    res.status(500).json({ error: 'Clerk sync failed' });
+  }
+};

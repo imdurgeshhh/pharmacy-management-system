@@ -1,102 +1,257 @@
 const { pool } = require('../config/db');
 
-// Get all medicines with current stock (combining Medicines and Inventory)
+// Get all medicines with current stock, strictly isolated by tenant admin_id
 exports.getInventory = async (req, res) => {
     try {
+        const adminId = req.adminId;
+        const { schedule, search } = req.query;
+        const whereClauses = ['m.admin_id = $1'];
+        const params = [adminId];
+
+        if (schedule && schedule.toUpperCase() !== 'ALL') {
+            params.push(schedule.toUpperCase().trim());
+            whereClauses.push(`COALESCE(m.schedule, 'NONE') = $${params.length}`);
+        }
+
+        if (search && search.trim()) {
+            params.push(`%${search.trim()}%`);
+            whereClauses.push(`(
+                COALESCE(m.medicine_name, m.name) ILIKE $${params.length} OR
+                m.brand_name ILIKE $${params.length} OR
+                m.salt_composition ILIKE $${params.length} OR
+                m.barcode ILIKE $${params.length}
+            )`);
+        }
+
+        const whereSql = `WHERE ${whereClauses.join(' AND ')}`;
+
         const query = `
             SELECT 
-                m.id, m.medicine_name, m.brand_name, m.salt_composition, 
-                m.medicine_category, m.dosage_form, m.strength, m.barcode, 
-                COALESCE(SUM(i.stock_qty), 0) as total_stock
+                m.id, 
+                COALESCE(m.medicine_name, m.name) AS medicine_name,
+                COALESCE(m.medicine_name, m.name) AS name,
+                m.brand_name, 
+                m.salt_composition, 
+                COALESCE(m.medicine_category, m.category) AS medicine_category, 
+                m.dosage_form, 
+                m.strength, 
+                m.barcode, 
+                m.description,
+                COALESCE(m.schedule, 'NONE') AS schedule,
+                m.hsn_code,
+                m.pack_size,
+                m.admin_id,
+                COALESCE(SUM(i.stock_qty), 0) as total_stock,
+                COALESCE(MAX(i.mrp), 0) as mrp,
+                COALESCE(MAX(i.tax_percentage), 12) as tax_percentage,
+                MAX(i.id) as inventory_id,
+                MAX(i.batch_number) as batch_number
             FROM MEDICINES m
-            LEFT JOIN INVENTORY i ON m.id = i.medicine_id
+            LEFT JOIN INVENTORY i ON m.id = i.medicine_id AND i.admin_id = $1
+            ${whereSql}
             GROUP BY m.id
-            ORDER BY m.medicine_name;
+            ORDER BY COALESCE(m.medicine_name, m.name);
         `;
-        const result = await pool.query(query);
+        const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (error) {
-        console.error(error);
+        console.error('Error in getInventory:', error.message);
         res.status(500).json({ error: 'Failed to fetch inventory' });
     }
 };
 
-// Add a new medicine type
+// Add a new medicine type for the current tenant
 exports.addMedicine = async (req, res) => {
-    const { medicine_name, brand_name, salt_composition, medicine_category, dosage_form, strength, barcode, description } = req.body;
+    const adminId = req.adminId;
+    const {
+        medicine_name,
+        name,
+        brand_name,
+        salt_composition,
+        medicine_category,
+        category,
+        dosage_form,
+        strength,
+        barcode,
+        description,
+        schedule,
+        hsn_code,
+        pack_size
+    } = req.body;
+
+    const medName = medicine_name || name;
+    const medCategory = medicine_category || category || 'General';
+    const validSchedules = ['NONE', 'G', 'H', 'H1', 'X'];
+    let medSchedule = (schedule || 'NONE').toString().toUpperCase().trim();
+    if (!validSchedules.includes(medSchedule)) {
+        medSchedule = 'NONE';
+    }
+
     try {
         const result = await pool.query(
-            'INSERT INTO MEDICINES (medicine_name, brand_name, salt_composition, medicine_category, dosage_form, strength, barcode, description) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-            [medicine_name, brand_name, salt_composition, medicine_category, dosage_form, strength, barcode, description]
+            `INSERT INTO MEDICINES (
+                medicine_name, name, brand_name, salt_composition, 
+                medicine_category, category, dosage_form, strength, 
+                barcode, description, schedule, hsn_code, pack_size, admin_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            RETURNING *`,
+            [
+                medName, medName, brand_name, salt_composition,
+                medCategory, medCategory, dosage_form, strength,
+                barcode || null, description, medSchedule, hsn_code || '3004', pack_size || '1',
+                adminId
+            ]
         );
         res.status(201).json(result.rows[0]);
     } catch (error) {
-        console.error(error);
+        console.error('Error in addMedicine:', error.message);
         res.status(500).json({ error: 'Failed to add medicine' });
     }
 };
 
-// Get batches of a specific medicine
+// Get batches of a specific medicine — IDOR protected
 exports.getMedicineBatches = async (req, res) => {
     const { id } = req.params;
+    const adminId = req.adminId;
     try {
+        // Verify medicine belongs to authenticated tenant
+        const medCheck = await pool.query(
+            'SELECT id FROM MEDICINES WHERE id = $1 AND admin_id = $2',
+            [id, adminId]
+        );
+        if (medCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Medicine not found' });
+        }
+
         const result = await pool.query(
-            'SELECT * FROM INVENTORY WHERE medicine_id = $1 ORDER BY expiry_date ASC',
-            [id]
+            'SELECT * FROM INVENTORY WHERE medicine_id = $1 AND admin_id = $2 ORDER BY expiry_date ASC',
+            [id, adminId]
         );
         res.json(result.rows);
     } catch (error) {
-        console.error(error);
+        console.error('Error in getMedicineBatches:', error.message);
         res.status(500).json({ error: 'Failed to fetch batches' });
     }
 };
 
-// Update medicine info
-exports.updateMedicine = async (req, res) => {
+// Get single medicine by ID — IDOR protected
+exports.getMedicineById = async (req, res) => {
     const { id } = req.params;
-    const { medicine_name, brand_name, salt_composition, medicine_category, dosage_form, strength, barcode, description } = req.body;
+    const adminId = req.adminId;
     try {
         const result = await pool.query(
-            'UPDATE MEDICINES SET medicine_name=$1, brand_name=$2, salt_composition=$3, medicine_category=$4, dosage_form=$5, strength=$6, barcode=$7, description=$8 WHERE id=$9 RETURNING *',
-            [medicine_name, brand_name, salt_composition, medicine_category, dosage_form, strength, barcode, description, id]
+            'SELECT * FROM MEDICINES WHERE id = $1 AND admin_id = $2',
+            [id, adminId]
         );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Medicine not found' });
+        }
         res.json(result.rows[0]);
     } catch (error) {
-        console.error(error);
+        console.error('Error in getMedicineById:', error.message);
+        res.status(500).json({ error: 'Failed to fetch medicine' });
+    }
+};
+
+// Update medicine info — IDOR protected
+exports.updateMedicine = async (req, res) => {
+    const { id } = req.params;
+    const adminId = req.adminId;
+    const {
+        medicine_name,
+        name,
+        brand_name,
+        salt_composition,
+        medicine_category,
+        category,
+        dosage_form,
+        strength,
+        barcode,
+        description,
+        schedule,
+        hsn_code,
+        pack_size
+    } = req.body;
+
+    const medName = medicine_name || name;
+    const medCategory = medicine_category || category;
+    const validSchedules = ['NONE', 'G', 'H', 'H1', 'X'];
+    let medSchedule = schedule !== undefined && schedule !== null ? schedule.toString().toUpperCase().trim() : undefined;
+    if (medSchedule && !validSchedules.includes(medSchedule)) {
+        return res.status(400).json({ error: `Invalid schedule: '${schedule}'. Allowed values: ${validSchedules.join(', ')}` });
+    }
+
+    try {
+        const result = await pool.query(
+            `UPDATE MEDICINES SET 
+                medicine_name=$1, name=$2, brand_name=$3, salt_composition=$4, 
+                medicine_category=$5, category=$6, dosage_form=$7, strength=$8, 
+                barcode=$9, description=$10,
+                schedule=COALESCE($11, schedule),
+                hsn_code=COALESCE($12, hsn_code),
+                pack_size=COALESCE($13, pack_size)
+             WHERE id=$14 AND admin_id=$15 RETURNING *`,
+            [
+                medName, medName, brand_name, salt_composition,
+                medCategory, medCategory, dosage_form, strength,
+                barcode, description, medSchedule || null, hsn_code || null,
+                pack_size || null, id, adminId
+            ]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Medicine not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Error in updateMedicine:', error.message);
         res.status(500).json({ error: 'Failed to update medicine' });
     }
 };
 
-// Delete medicine
+// Delete medicine — Admin only, IDOR protected
 exports.deleteMedicine = async (req, res) => {
     const { id } = req.params;
+    const adminId = req.adminId;
     try {
-        // First delete related inventory
-        await pool.query('DELETE FROM INVENTORY WHERE medicine_id = $1', [id]);
-        // Then delete the medicine
-        await pool.query('DELETE FROM MEDICINES WHERE id = $1', [id]);
+        // Check medicine exists in this tenant
+        const check = await pool.query('SELECT id FROM MEDICINES WHERE id = $1 AND admin_id = $2', [id, adminId]);
+        if (check.rows.length === 0) {
+            return res.status(404).json({ error: 'Medicine not found' });
+        }
+
+        // Delete related inventory in this tenant
+        await pool.query('DELETE FROM INVENTORY WHERE medicine_id = $1 AND admin_id = $2', [id, adminId]);
+        // Delete medicine in this tenant
+        await pool.query('DELETE FROM MEDICINES WHERE id = $1 AND admin_id = $2', [id, adminId]);
         res.json({ message: 'Medicine deleted successfully' });
     } catch (error) {
-        console.error(error);
+        console.error('Error in deleteMedicine:', error.message);
         res.status(500).json({ error: 'Failed to delete medicine' });
     }
 };
 
-// Get expiring medicines alert (e.g., within next 30 days)
+// Get expiring medicines alert — tenant isolated
 exports.getAlerts = async (req, res) => {
     try {
-        // Low stock threshold < 10, or Expiring in 30 days
+        const adminId = req.adminId;
         const query = `
-            SELECT m.medicine_name, i.batch_number, i.stock_qty, i.expiry_date
+            SELECT 
+                COALESCE(m.medicine_name, m.name) AS name,
+                COALESCE(m.medicine_name, m.name) AS medicine_name,
+                i.batch_number, 
+                i.stock_qty, 
+                i.expiry_date
             FROM INVENTORY i
             JOIN MEDICINES m ON i.medicine_id = m.id
-            WHERE i.stock_qty < 20 OR i.expiry_date <= CURRENT_DATE + INTERVAL '30 days'
+            WHERE i.admin_id = $1 
+              AND (i.stock_qty < 20 OR i.expiry_date <= CURRENT_DATE + INTERVAL '30 days')
             ORDER BY i.expiry_date ASC
         `;
-        const result = await pool.query(query);
+        const result = await pool.query(query, [adminId]);
         res.json(result.rows);
     } catch (error) {
-        console.error(error);
+        console.error('Error in getAlerts:', error.message);
         res.status(500).json({ error: 'Failed to fetch alerts' });
     }
 };

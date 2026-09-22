@@ -1,0 +1,13 @@
+{
+  "[]": {
+    "id": "number",
+    "medicine_name": "string",
+    "quantity": "number",
+    "price_per_unit": "string",
+    "total_amount": "string",
+    "gst_number": "null",
+    "supplier_name": "string",
+    "purchase_date": "string",
+    "created_at": "string"
+  }
+}

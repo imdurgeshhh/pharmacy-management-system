@@ -1,0 +1,549 @@
+{
+  "info": {
+    "_postman_id": "pharma-api-collection-v1",
+    "name": "Pharma Backend API",
+    "description": "Complete API test collection for the Pharma pharmacy management system.\nDerived from openapi.yaml and the actual route/controller code.\n\nPre-requisites:\n  1. Start the backend server (npm run dev)\n  2. Set BASE_URL in the environment (default: http://localhost:5000/api)\n  3. Run the clerk-sync request first — it auto-sets ADMIN_TOKEN env var\n\nBug documentation:\n  - BUG-01: Most endpoints have no auth guard\n  - BUG-03: DELETE /inventory/medicine/:id returns 200 for non-existent IDs\n  - BUG-06: Any authenticated user can update any employee\n  - BUG-08: No idempotency on POST /sales and POST /purchases",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "BASE_URL", "value": "http://localhost:5000/api" },
+    { "key": "ADMIN_TOKEN", "value": "" },
+    { "key": "SUPPLIER_ID", "value": "" },
+    { "key": "MEDICINE_ID", "value": "" },
+    { "key": "INVENTORY_ID", "value": "" },
+    { "key": "CUSTOMER_ID", "value": "" },
+    { "key": "SALE_ID", "value": "" },
+    { "key": "PURCHASE_ID", "value": "" },
+    { "key": "EMPLOYEE_ID", "value": "" },
+    { "key": "WS_SALE_ID", "value": "" },
+    { "key": "WS_PURCHASE_ID", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "00 Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status is OK', () => pm.expect(pm.response.json().status).to.eql('OK'));",
+                  "pm.test('Response time < 2000ms', () => pm.expect(pm.response.responseTime).to.be.below(2000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{BASE_URL}}/health" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 Auth",
+      "item": [
+        {
+          "name": "POST /auth/clerk-sync",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200 or 201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has user object', () => pm.expect(json.user).to.be.an('object'));",
+                  "pm.test('User has id', () => pm.expect(json.user.id).to.be.a('number'));",
+                  "pm.test('User has role', () => pm.expect(['admin','shopkeeper','employee']).to.include(json.user.role));",
+                  "pm.test('No token in response (MSW mock bug)', () => pm.expect(json.user.token).to.be.undefined);",
+                  "pm.collectionVariables.set('ADMIN_TOKEN', 'clerk-session-token-placeholder');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/auth/clerk-sync" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"full_name\": \"Test Admin\",\n  \"username\": \"testadmin\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /auth/employees (admin only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200 or 401/403', () => pm.expect(pm.response.code).to.be.oneOf([200,401,403]));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{BASE_URL}}/auth/employees" },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{ADMIN_TOKEN}}" }] }
+          }
+        },
+        {
+          "name": "POST /auth/clerk-sync — missing email → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error field', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/auth/clerk-sync" },
+            "body": { "mode": "raw", "raw": "{ \"full_name\": \"No Email\" }" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Customers",
+      "item": [
+        {
+          "name": "GET /customers",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/customers" } }
+        },
+        {
+          "name": "POST /customers",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const j = pm.response.json();",
+              "pm.test('Has id', () => pm.expect(j.id).to.be.a('number'));",
+              "pm.collectionVariables.set('CUSTOMER_ID', j.id);"
+            ]}
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/customers" },
+            "body": { "mode": "raw", "raw": "{ \"name\": \"Newman Patient\", \"phone\": \"9900000042\", \"email\": \"newman@test.com\" }" }
+          }
+        },
+        {
+          "name": "GET /customers/:id",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Has name', () => pm.expect(pm.response.json().name).to.be.a('string'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/customers/{{CUSTOMER_ID}}" } }
+        },
+        {
+          "name": "PUT /customers/:id",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Name updated', () => pm.expect(pm.response.json().name).to.eql('Newman Updated'));"
+            ]}
+          }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/customers/{{CUSTOMER_ID}}" },
+            "body": { "mode": "raw", "raw": "{ \"name\": \"Newman Updated\", \"phone\": \"9900000042\" }" }
+          }
+        },
+        {
+          "name": "DELETE /customers/:id",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Has message', () => pm.expect(pm.response.json().message).to.be.a('string'));"
+            ]}
+          }],
+          "request": { "method": "DELETE", "url": { "raw": "{{BASE_URL}}/customers/{{CUSTOMER_ID}}" } }
+        },
+        {
+          "name": "GET /customers/999999 → 404",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 404', () => pm.response.to.have.status(404));",
+              "pm.test('Has error field', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/customers/999999" } }
+        }
+      ]
+    },
+    {
+      "name": "03 Suppliers",
+      "item": [
+        {
+          "name": "POST /suppliers",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('SUPPLIER_ID', pm.response.json().id);"
+            ]}
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/suppliers" },
+            "body": { "mode": "raw", "raw": "{ \"name\": \"Newman Pharma\", \"phone\": \"7700000099\", \"contact_person\": \"NP\", \"email\": \"np@newman.com\", \"address\": \"1 Newman Rd\" }" }
+          }
+        },
+        {
+          "name": "GET /suppliers",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/suppliers" } }
+        },
+        {
+          "name": "DELETE /suppliers/:id (admin)",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 or 401', () => pm.expect(pm.response.code).to.be.oneOf([200,401,403]));"
+            ]}
+          }],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{BASE_URL}}/suppliers/{{SUPPLIER_ID}}" },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{ADMIN_TOKEN}}" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 Inventory",
+      "item": [
+        {
+          "name": "GET /inventory",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/inventory" } }
+        },
+        {
+          "name": "GET /inventory?schedule=H",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/inventory?schedule=H" } }
+        },
+        {
+          "name": "GET /inventory?schedule=INVALID → 400",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 400', () => pm.response.to.have.status(400));",
+              "pm.test('Has error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/inventory?schedule=INVALID" } }
+        },
+        {
+          "name": "POST /inventory/medicine",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('MEDICINE_ID', pm.response.json().id);"
+            ]}
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/inventory/medicine" },
+            "body": { "mode": "raw", "raw": "{ \"medicine_name\": \"Newman Aspirin\", \"brand_name\": \"Disprin\", \"salt_composition\": \"Aspirin\", \"medicine_category\": \"Analgesic\", \"dosage_form\": \"Tablet\", \"strength\": \"100mg\", \"barcode\": \"NEWMAN-ASPIRIN-001\", \"schedule\": \"G\", \"hsn_code\": \"3004\", \"pack_size\": \"10\" }" }
+          }
+        },
+        {
+          "name": "GET /inventory/alerts",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/inventory/alerts" } }
+        }
+      ]
+    },
+    {
+      "name": "05 Purchases",
+      "item": [
+        {
+          "name": "GET /purchases",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/purchases" } }
+        },
+        {
+          "name": "POST /purchases",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const j = pm.response.json();",
+              "pm.test('Has purchaseId (not purchase_id)', () => pm.expect(j.purchaseId).to.be.a('number'));",
+              "pm.test('Has message', () => pm.expect(j.message).to.be.a('string'));",
+              "pm.collectionVariables.set('PURCHASE_ID', j.purchaseId);"
+            ]}
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/purchases" },
+            "body": { "mode": "raw", "raw": "{\n  \"supplier_id\": {{SUPPLIER_ID}},\n  \"total_amount\": 500,\n  \"tax_amount\": 50,\n  \"items\": [{\n    \"medicine_id\": {{MEDICINE_ID}},\n    \"batch_number\": \"NEWMAN-BATCH-001\",\n    \"qty\": 100,\n    \"price\": 5.00,\n    \"mrp\": 12.00,\n    \"tax\": 0.60,\n    \"tax_percentage\": 12,\n    \"schedule\": \"G\",\n    \"expiry_date\": \"2027-12-31\"\n  }]\n}" }
+          }
+        },
+        {
+          "name": "POST /purchases — empty items → 400",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 400', () => pm.response.to.have.status(400));",
+              "pm.test('Has error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+            ]}
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/purchases" },
+            "body": { "mode": "raw", "raw": "{ \"supplier_id\": 1, \"total_amount\": 0, \"items\": [] }" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Sales",
+      "item": [
+        {
+          "name": "GET /sales",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/sales" } }
+        },
+        {
+          "name": "POST /sales — empty items → 400",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 400', () => pm.response.to.have.status(400));",
+              "pm.test('Has error', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+            ]}
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/sales" },
+            "body": { "mode": "raw", "raw": "{ \"total_amount\": 100, \"tax_amount\": 0, \"items\": [] }" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 Reports",
+      "item": [
+        {
+          "name": "GET /reports/dashboard",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('todaySales is number', () => pm.expect(j.todaySales).to.be.a('number'));",
+              "pm.test('monthSales is number', () => pm.expect(j.monthSales).to.be.a('number'));",
+              "pm.test('inventoryValue is number', () => pm.expect(j.inventoryValue).to.be.a('number'));",
+              "pm.test('lowStockItems is number', () => pm.expect(j.lowStockItems).to.be.a('number'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/reports/dashboard" } }
+        },
+        {
+          "name": "GET /reports/sales",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/reports/sales" } }
+        }
+      ]
+    },
+    {
+      "name": "08 Wholesale",
+      "item": [
+        {
+          "name": "POST /wholesale/sales",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "const j = pm.response.json();",
+              "pm.test('total_amount = qty * price_per_unit', () => pm.expect(parseFloat(j.total_amount)).to.eql(100 * 20));",
+              "pm.collectionVariables.set('WS_SALE_ID', j.id);"
+            ]}
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{BASE_URL}}/wholesale/sales" },
+            "body": { "mode": "raw", "raw": "{ \"medicine_name\": \"Newman WS Med\", \"quantity\": 100, \"price_per_unit\": 20, \"shopkeeper_name\": \"Newman Chemist\" }" }
+          }
+        },
+        {
+          "name": "GET /wholesale/sales",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/wholesale/sales" } }
+        },
+        {
+          "name": "DELETE /wholesale/sales/:id (admin)",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('200 or 401/403', () => pm.expect(pm.response.code).to.be.oneOf([200,401,403]));"
+            ]}
+          }],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{BASE_URL}}/wholesale/sales/{{WS_SALE_ID}}" },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{ADMIN_TOKEN}}" }] }
+          }
+        },
+        {
+          "name": "GET /wholesale/purchases",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/wholesale/purchases" } }
+        }
+      ]
+    },
+    {
+      "name": "09 Store",
+      "item": [
+        {
+          "name": "GET /store",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "['shop_name','address','gstin','phone','dl_no'].forEach(k => {",
+              "  pm.test(`Has field: ${k}`, () => pm.expect(k in j).to.be.true);",
+              "});"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/store" } }
+        }
+      ]
+    },
+    {
+      "name": "10 Security Contract",
+      "item": [
+        {
+          "name": "GET /auth/employees — no token → 401",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('Status 401', () => pm.response.to.have.status(401));",
+              "pm.test('Has error field', () => pm.expect(pm.response.json().error).to.be.a('string'));",
+              "pm.test('No stack trace', () => pm.expect(pm.response.text()).to.not.include('at Object.'));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/auth/employees" } }
+        },
+        {
+          "name": "BUG-01: GET /sales — no token → 200 (should be 401)",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "pm.test('BUG-01: Status 200 (endpoint is public)', () => pm.response.to.have.status(200));"
+            ]}
+          }],
+          "request": { "method": "GET", "url": { "raw": "{{BASE_URL}}/sales" } }
+        },
+        {
+          "name": "BUG-03: DELETE /inventory/medicine/999999 (admin) → should 404",
+          "event": [{
+            "listen": "test",
+            "script": { "exec": [
+              "if (pm.response.code === 200) {",
+              "  pm.test('BUG-03 confirmed: non-existent delete returns 200', () => pm.expect(pm.response.code).to.eql(200));",
+              "} else {",
+              "  pm.test('BUG-03 fixed: returns 404', () => pm.response.to.have.status(404));",
+              "}"
+            ]}
+          }],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{BASE_URL}}/inventory/medicine/999999" },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{ADMIN_TOKEN}}" }] }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "[]": {
+    "id": "number",
+    "medicine_name": "string",
+    "name": "string",
+    "brand_name": "string",
+    "salt_composition": "string",
+    "medicine_category": "string",
+    "dosage_form": "string",
+    "strength": "string",
+    "barcode": "string",
+    "description": "string",
+    "schedule": "string",
+    "hsn_code": "string",
+    "pack_size": "string",
+    "total_stock": "string",
+    "mrp": "string",
+    "tax_percentage": "string",
+    "inventory_id": "number",
+    "batch_number": "string"
+  }
+}

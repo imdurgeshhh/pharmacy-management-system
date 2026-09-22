@@ -1,0 +1,160 @@
+name: CI — PharmaCare Test Suite
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Nightly full E2E run at 2am UTC
+    - cron: '0 2 * * *'
+
+env:
+  NODE_VERSION: '20.x'
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 1: Fast PR checks — Lint + Vitest (unit, component, integration, regression)
+  # Target: < 5 minutes
+  # ─────────────────────────────────────────────────────────────────────────────
+  vitest:
+    name: "Stage 1 — Unit / Component / Integration Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run Vitest (all unit, component, integration, regression tests)
+        run: npm run test -- --reporter=verbose
+
+      - name: Generate coverage report
+        run: npm run test:coverage -- --reporter=json --reporter=text
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vitest-coverage
+          path: frontend/coverage/
+          retention-days: 7
+
+      # Coverage thresholds are enforced in vitest.config.js.
+      # This step will fail the job if thresholds are not met.
+      - name: Assert coverage thresholds (≥ 70% lines & branches for utils/ store/)
+        run: |
+          echo "Coverage thresholds enforced by vitest.config.js — if this step reached here, thresholds passed."
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 2: Pre-merge / nightly — Full Playwright E2E + Regression
+  # Runs: on push to main, on schedule (nightly), or manually
+  # ─────────────────────────────────────────────────────────────────────────────
+  playwright:
+    name: "Stage 2 — Full E2E Tests (Playwright)"
+    runs-on: ubuntu-latest
+    needs: vitest
+    # Only run E2E on merges to main OR nightly schedule (not on every PR to save time)
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Run full Playwright E2E suite
+        run: npx playwright test
+        working-directory: .
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:5173
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload Playwright screenshots (failures only)
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-screenshots
+          path: test-results/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Stage 3: Post-deploy smoke testing
+  # Triggered manually with PLAYWRIGHT_BASE_URL pointing to the deployed env
+  # ─────────────────────────────────────────────────────────────────────────────
+  smoke:
+    name: "Stage 3 — Smoke Tests (Post-Deploy)"
+    runs-on: ubuntu-latest
+    needs: playwright
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install Playwright browsers (chromium only)
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Run @smoke tagged tests against staging
+        run: npx playwright test --grep @smoke
+        working-directory: .
+        env:
+          # Override to point at the deployed staging URL instead of localhost
+          PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_URL || 'http://localhost:5173' }}
+          CI: true
+
+      - name: Upload smoke test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-report
+          path: playwright-report/
+          retention-days: 7

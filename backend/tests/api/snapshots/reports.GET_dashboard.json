@@ -1,0 +1,6 @@
+{
+  "todaySales": "number",
+  "monthSales": "number",
+  "inventoryValue": "number",
+  "lowStockItems": "number"
+}

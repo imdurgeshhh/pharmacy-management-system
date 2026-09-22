@@ -1,0 +1,18 @@
+{
+  "id": "pharma-env-local",
+  "name": "Pharma — Local Development",
+  "values": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:5000/api",
+      "enabled": true,
+      "description": "Backend server base URL"
+    },
+    {
+      "key": "ADMIN_TOKEN",
+      "value": "",
+      "enabled": true,
+      "description": "Set this to a real Clerk session token for authenticated requests. Run POST /auth/clerk-sync first."
+    }
+  ]
+}

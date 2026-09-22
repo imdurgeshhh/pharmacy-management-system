@@ -1,0 +1,1566 @@
+openapi: '3.0.3'
+info:
+  title: Pharma Backend API
+  version: '1.0.0'
+  description: |
+    OpenAPI specification derived from the actual Express routes and controllers.
+    No spec existed before this file — treat it as the canonical contract.
+
+    ## Auth model
+    - **Public** endpoints: no token required (see security: [] on each path).
+    - **Authenticated** endpoints: require a valid Clerk session token in `Authorization: Bearer <jwt>`.
+    - **Admin-only** endpoints: additionally require `role = 'admin'` in the `employees` DB table
+      (looked up by the email in the Clerk session claims).
+
+    ## Known Security Issues
+    - **BUG-01**: Most endpoints are public and should require authentication.
+    - **BUG-03**: DELETE /inventory/medicine/:id returns 200 for non-existent IDs.
+    - **BUG-06**: PUT /employees/:id has no role restriction beyond authentication.
+    - **BUG-08**: POST /sales and POST /purchases have no idempotency guard.
+
+servers:
+  - url: http://localhost:5000/api
+    description: Local development
+
+components:
+  securitySchemes:
+    ClerkBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Clerk session JWT. Set via Authorization: Bearer <clerk_session_token>.
+        The server uses @clerk/express clerkMiddleware + getAuth(req) to verify.
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error. Must NOT contain stack traces or SQL fragments.
+      example:
+        error: "Resource not found"
+
+    HealthResponse:
+      type: object
+      required: [status, timestamp, message]
+      properties:
+        status:
+          type: string
+          enum: [OK]
+        timestamp:
+          type: string
+          format: date-time
+        message:
+          type: string
+      example:
+        status: OK
+        timestamp: "2026-09-21T10:00:00.000Z"
+        message: "DB connected"
+
+    User:
+      type: object
+      properties:
+        id:       { type: integer }
+        name:     { type: string }
+        email:    { type: string, format: email }
+        username: { type: string }
+        role:     { type: string, enum: [admin, shopkeeper, employee] }
+        employee_id: { type: string, nullable: true }
+        admin_id:    { type: integer, nullable: true }
+
+    Customer:
+      type: object
+      properties:
+        id:         { type: integer }
+        name:       { type: string }
+        phone:      { type: string, nullable: true }
+        email:      { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Supplier:
+      type: object
+      properties:
+        id:             { type: integer }
+        name:           { type: string }
+        contact_person: { type: string, nullable: true }
+        phone:          { type: string }
+        email:          { type: string, nullable: true }
+        address:        { type: string, nullable: true }
+        created_at:     { type: string, format: date-time }
+
+    Medicine:
+      type: object
+      properties:
+        id:               { type: integer }
+        medicine_name:    { type: string }
+        name:             { type: string }
+        brand_name:       { type: string, nullable: true }
+        salt_composition: { type: string, nullable: true }
+        medicine_category:{ type: string, nullable: true }
+        category:         { type: string, nullable: true }
+        dosage_form:      { type: string, nullable: true }
+        strength:         { type: string, nullable: true }
+        barcode:          { type: string, nullable: true }
+        description:      { type: string, nullable: true }
+        schedule:
+          type: string
+          enum: [G, H, H1, X, NONE]
+          default: NONE
+        hsn_code:   { type: string, default: '3004' }
+        pack_size:  { type: string, default: '1' }
+        created_at: { type: string, format: date-time }
+
+    InventoryItem:
+      allOf:
+        - $ref: '#/components/schemas/Medicine'
+        - type: object
+          properties:
+            inventory_id:  { type: integer }
+            batch_number:  { type: string }
+            total_stock:   { type: integer }
+            mrp:           { type: number, format: float }
+            tax_percentage:{ type: number, format: float }
+
+    InventoryAlert:
+      type: object
+      properties:
+        name:          { type: string }
+        medicine_name: { type: string }
+        batch_number:  { type: string }
+        stock_qty:     { type: integer }
+        expiry_date:   { type: string, format: date }
+
+    Purchase:
+      type: object
+      properties:
+        id:            { type: integer }
+        supplier_id:   { type: integer, nullable: true }
+        supplier_name: { type: string, nullable: true }
+        total_amount:  { type: number, format: float }
+        tax_amount:    { type: number, format: float }
+        created_at:    { type: string, format: date-time }
+
+    PurchaseItem:
+      type: object
+      properties:
+        id:           { type: integer }
+        medicine_id:  { type: integer }
+        batch_number: { type: string }
+        qty:          { type: integer }
+        price:        { type: number, format: float }
+        tax:          { type: number, format: float }
+
+    PurchaseDetail:
+      allOf:
+        - $ref: '#/components/schemas/Purchase'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/PurchaseItem' }
+
+    SaleListItem:
+      type: object
+      properties:
+        id:             { type: integer }
+        total_amount:   { type: number, format: float }
+        tax_amount:     { type: number, format: float }
+        created_at:     { type: string, format: date-time }
+        invoice_no:     { type: string, nullable: true }
+        payment_mode:   { type: string }
+        customer_name:  { type: string, nullable: true }
+        employee_name:  { type: string, nullable: true }
+
+    SaleDetail:
+      allOf:
+        - $ref: '#/components/schemas/SaleListItem'
+        - type: object
+          properties:
+            customer_phone: { type: string, nullable: true }
+            customer_email: { type: string, nullable: true }
+            items:
+              type: array
+              items: { type: object }
+
+    Employee:
+      type: object
+      properties:
+        id:             { type: integer }
+        name:           { type: string }
+        full_name:      { type: string }
+        email:          { type: string, nullable: true }
+        role:           { type: string, enum: [admin, shopkeeper, employee] }
+        qualification:  { type: string, nullable: true }
+        address:        { type: string, nullable: true }
+        mobile_no:      { type: string, nullable: true }
+        aadhar_number:  { type: string, nullable: true }
+        is_active:      { type: boolean }
+        created_at:     { type: string, format: date-time }
+
+    WholesaleSale:
+      type: object
+      properties:
+        id:              { type: integer }
+        medicine_name:   { type: string }
+        quantity:        { type: integer }
+        price_per_unit:  { type: number, format: float }
+        total_amount:    { type: number, format: float, description: Generated column (qty * price_per_unit) }
+        gst_number:      { type: string, nullable: true }
+        shopkeeper_name: { type: string }
+        sale_date:       { type: string, format: date }
+        created_at:      { type: string, format: date-time }
+
+    WholesalePurchase:
+      type: object
+      properties:
+        id:             { type: integer }
+        medicine_name:  { type: string }
+        quantity:       { type: integer }
+        price_per_unit: { type: number, format: float }
+        total_amount:   { type: number, format: float, description: Generated column (qty * price_per_unit) }
+        gst_number:     { type: string, nullable: true }
+        supplier_name:  { type: string }
+        purchase_date:  { type: string, format: date }
+        created_at:     { type: string, format: date-time }
+
+    DashboardStats:
+      type: object
+      required: [todaySales, monthSales, inventoryValue, lowStockItems]
+      properties:
+        todaySales:     { type: number, minimum: 0 }
+        monthSales:     { type: number, minimum: 0 }
+        inventoryValue: { type: number, minimum: 0 }
+        lowStockItems:  { type: integer, minimum: 0 }
+
+    SalesReportRow:
+      type: object
+      properties:
+        date:  { type: string, format: date }
+        sales: { type: number }
+        tax:   { type: number }
+
+    StoreSettings:
+      type: object
+      properties:
+        shop_name:   { type: string }
+        address:     { type: string }
+        gstin:       { type: string }
+        phone:       { type: string }
+        dl_no:       { type: string }
+        pan_no:      { type: string, nullable: true }
+        aadhar_no:   { type: string, nullable: true }
+        food_lic_no: { type: string, nullable: true }
+        email:       { type: string, nullable: true }
+
+paths:
+  # ─── HEALTH ────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      tags: [health]
+      security: []
+      responses:
+        '200':
+          description: Server and DB are healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+        '500':
+          description: DB connection failure
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─── AUTH ──────────────────────────────────────────────────────────────────
+
+  /auth/clerk-sync:
+    post:
+      summary: Sync Clerk user to local employees table
+      operationId: clerkSync
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, username]
+              properties:
+                email:     { type: string, format: email }
+                full_name: { type: string }
+                username:  { type: string }
+                clerk_id:  { type: string }
+            example:
+              email: user@example.com
+              full_name: Test User
+              username: testuser
+      responses:
+        '200':
+          description: Existing user found and returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  user:    { $ref: '#/components/schemas/User' }
+        '201':
+          description: New user created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  user:    { $ref: '#/components/schemas/User' }
+        '400':
+          description: Missing required fields (email or username)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: Database error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/employees:
+    get:
+      summary: List all Clerk-synced employees (admin only)
+      operationId: listAuthEmployees
+      tags: [auth]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin]
+      responses:
+        '200':
+          description: Array of employee records
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Employee' }
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Insufficient role (not admin)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─── CUSTOMERS ────────────────────────────────────────────────────────────
+  # BUG-01: All customer endpoints are currently public (no auth).
+
+  /customers:
+    get:
+      summary: List all customers
+      operationId: listCustomers
+      tags: [customers]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Array of customers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Customer' }
+        '500':
+          description: Database error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    post:
+      summary: Create a customer
+      operationId: createCustomer
+      tags: [customers]
+      security: []
+      x-security-bug: BUG-01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:  { type: string }
+                phone: { type: string, nullable: true }
+                email: { type: string, format: email, nullable: true }
+      responses:
+        '201':
+          description: Customer created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '500':
+          description: DB error (BUG-07 — missing name hits DB NOT NULL constraint instead of returning 400)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /customers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    get:
+      summary: Get customer by ID
+      operationId: getCustomer
+      tags: [customers]
+      security: []
+      responses:
+        '200':
+          description: Customer found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    put:
+      summary: Update customer
+      operationId: updateCustomer
+      tags: [customers]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:  { type: string }
+                phone: { type: string, nullable: true }
+                email: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Updated customer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    delete:
+      summary: Delete customer
+      operationId: deleteCustomer
+      tags: [customers]
+      security: []
+      responses:
+        '200':
+          description: Customer deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:  { type: string }
+                  customer: { $ref: '#/components/schemas/Customer' }
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─── EMPLOYEES ─────────────────────────────────────────────────────────────
+
+  /employees:
+    get:
+      summary: List employees
+      operationId: listEmployees
+      tags: [employees]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin, shopkeeper, employee]
+      parameters:
+        - name: admin_id
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Array of employees
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Employee' }
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    post:
+      summary: Create employee (admin only)
+      operationId: createEmployee
+      tags: [employees]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, email, password, confirm_password]
+              properties:
+                full_name:       { type: string }
+                name:            { type: string, description: Alias for full_name }
+                email:           { type: string, format: email }
+                password:        { type: string, minLength: 6 }
+                confirm_password:{ type: string }
+                qualification:   { type: string, nullable: true }
+                address:         { type: string, nullable: true }
+                mobile_no:       { type: string, nullable: true }
+                aadhar_number:   { type: string, nullable: true }
+                admin_id:        { type: integer, nullable: true }
+      responses:
+        '201':
+          description: Employee created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:  { type: string }
+                  employee: { $ref: '#/components/schemas/Employee' }
+        '400':
+          description: Validation error (missing fields, password mismatch, duplicate email)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Not admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /employees/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    put:
+      summary: Update employee (BUG-06 — any authenticated user can update)
+      operationId: updateEmployee
+      tags: [employees]
+      security:
+        - ClerkBearer: []
+      x-security-bug: BUG-06
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:     { type: string }
+                name:          { type: string }
+                qualification: { type: string, nullable: true }
+                address:       { type: string, nullable: true }
+                mobile_no:     { type: string, nullable: true }
+                email:         { type: string, nullable: true }
+                aadhar_number: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Updated employee
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:  { type: string }
+                  employee: { $ref: '#/components/schemas/Employee' }
+        '401': { description: Not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Employee not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+    delete:
+      summary: Delete employee (admin only)
+      operationId: deleteEmployee
+      tags: [employees]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin]
+      responses:
+        '200':
+          description: Employee deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '401': { description: Not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Not admin, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Employee not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /employees/{id}/toggle:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    patch:
+      summary: Toggle employee active status
+      operationId: toggleEmployee
+      tags: [employees]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin, shopkeeper, employee]
+      responses:
+        '200':
+          description: Toggled employee
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  employee:
+                    type: object
+                    properties:
+                      id:        { type: integer }
+                      is_active: { type: boolean }
+                      name:      { type: string }
+                      full_name: { type: string }
+        '401': { description: Not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Employee not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  # ─── INVENTORY ─────────────────────────────────────────────────────────────
+  # BUG-01: GET and POST/PUT medicine are public.
+
+  /inventory:
+    get:
+      summary: List inventory (medicines with stock)
+      operationId: listInventory
+      tags: [inventory]
+      security: []
+      x-security-bug: BUG-01
+      parameters:
+        - name: schedule
+          in: query
+          schema:
+            type: string
+            enum: [G, H, H1, X, NONE]
+          description: Filter by drug schedule
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Search by medicine name or brand name
+      responses:
+        '200':
+          description: Array of inventory items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/InventoryItem' }
+        '400':
+          description: Invalid schedule value
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /inventory/alerts:
+    get:
+      summary: Get low-stock and near-expiry alerts
+      operationId: getInventoryAlerts
+      tags: [inventory]
+      security: []
+      responses:
+        '200':
+          description: Alert items (stock < 20 or expiring within 90 days)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/InventoryAlert' }
+
+  /inventory/medicine:
+    post:
+      summary: Create medicine master record
+      operationId: createMedicine
+      tags: [inventory]
+      security: []
+      x-security-bug: BUG-01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                medicine_name:     { type: string }
+                name:              { type: string, description: Alias for medicine_name }
+                brand_name:        { type: string, nullable: true }
+                salt_composition:  { type: string, nullable: true }
+                medicine_category: { type: string, nullable: true }
+                category:          { type: string, nullable: true }
+                dosage_form:       { type: string, nullable: true }
+                strength:          { type: string, nullable: true }
+                barcode:           { type: string, nullable: true }
+                description:       { type: string, nullable: true }
+                schedule:          { type: string, enum: [G, H, H1, X, NONE] }
+                hsn_code:          { type: string }
+                pack_size:         { type: string }
+      responses:
+        '201':
+          description: Medicine created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Medicine' }
+        '400':
+          description: Invalid schedule value
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /inventory/medicine/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    put:
+      summary: Update medicine master record
+      operationId: updateMedicine
+      tags: [inventory]
+      security: []
+      x-security-bug: BUG-01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Medicine' }
+      responses:
+        '200':
+          description: Updated medicine
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Medicine' }
+        '400':
+          description: Invalid schedule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    delete:
+      summary: Delete medicine (admin only)
+      operationId: deleteMedicine
+      tags: [inventory]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin]
+      x-known-bug: BUG-03
+      responses:
+        '200':
+          description: Medicine deleted (BUG-03 — also returns 200 for non-existent IDs)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '401': { description: Not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Not admin, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /inventory/medicine/{id}/batches:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      summary: List inventory batches for a medicine
+      operationId: getMedicineBatches
+      tags: [inventory]
+      security: []
+      responses:
+        '200':
+          description: Array of inventory batches (empty if none)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/InventoryItem' }
+
+  # ─── OCR ──────────────────────────────────────────────────────────────────
+  # BUG-05: No auth, no file type check, no size limit.
+
+  /ocr/scan:
+    post:
+      summary: OCR scan invoice image
+      operationId: ocrScan
+      tags: [ocr]
+      security: []
+      x-security-bug: BUG-05
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [invoice]
+              properties:
+                invoice:
+                  type: string
+                  format: binary
+                  description: Invoice image file (JPEG, PNG, PDF)
+      responses:
+        '200':
+          description: OCR result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      rawText:
+                        type: string
+                      potentialItems:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:  { type: string }
+                            qty:   { type: number }
+                            price: { type: number }
+        '400':
+          description: No file attached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─── PURCHASES ────────────────────────────────────────────────────────────
+  # BUG-01: All purchase endpoints are public.
+  # BUG-08: POST creates duplicate records on repeat (no idempotency).
+
+  /purchases:
+    get:
+      summary: List purchases
+      operationId: listPurchases
+      tags: [purchases]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Purchase list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Purchase' }
+
+    post:
+      summary: Create a purchase
+      operationId: createPurchase
+      tags: [purchases]
+      security: []
+      x-security-bug: BUG-01
+      x-idempotency-bug: BUG-08
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplier_id, items]
+              properties:
+                supplier_id:  { type: integer }
+                total_amount: { type: number }
+                tax_amount:   { type: number }
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    properties:
+                      medicine_id:   { type: integer, nullable: true }
+                      medicine_name: { type: string, nullable: true }
+                      name:          { type: string, nullable: true }
+                      batch_number:  { type: string }
+                      qty:           { type: integer }
+                      price:         { type: number }
+                      mrp:           { type: number }
+                      tax:           { type: number }
+                      tax_percentage:{ type: number }
+                      expiry_date:   { type: string, format: date }
+                      schedule:      { type: string, enum: [G, H, H1, X, NONE] }
+      responses:
+        '201':
+          description: Purchase created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, purchaseId]
+                properties:
+                  message:    { type: string }
+                  purchaseId: { type: integer }
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /purchases/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    get:
+      summary: Get purchase with items
+      operationId: getPurchase
+      tags: [purchases]
+      security: []
+      responses:
+        '200':
+          description: Purchase detail with items
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseDetail' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    put:
+      summary: Update purchase header
+      operationId: updatePurchase
+      tags: [purchases]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                supplier_id:  { type: integer }
+                total_amount: { type: number }
+                tax_amount:   { type: number }
+      responses:
+        '200':
+          description: Updated purchase
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Purchase' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    delete:
+      summary: Delete purchase
+      operationId: deletePurchase
+      tags: [purchases]
+      security: []
+      responses:
+        '200':
+          description: Purchase deleted and inventory reverted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:  { type: string }
+                  purchase: { $ref: '#/components/schemas/Purchase' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─── REPORTS ──────────────────────────────────────────────────────────────
+  # BUG-01: Both endpoints are public.
+
+  /reports/dashboard:
+    get:
+      summary: Dashboard KPI stats
+      operationId: getDashboard
+      tags: [reports]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardStats' }
+
+  /reports/sales:
+    get:
+      summary: Sales trend for last 7 days
+      operationId: getSalesReport
+      tags: [reports]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Last 7 days of sales data
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SalesReportRow' }
+
+  # ─── SALES ────────────────────────────────────────────────────────────────
+  # BUG-01: All endpoints are public.
+  # BUG-08: POST creates duplicate invoices on repeat.
+
+  /sales:
+    get:
+      summary: List sales
+      operationId: listSales
+      tags: [sales]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Sales list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SaleListItem' }
+
+    post:
+      summary: Create a sale (POS)
+      operationId: createSale
+      tags: [sales]
+      security: []
+      x-security-bug: BUG-01
+      x-idempotency-bug: BUG-08
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [total_amount, items]
+              properties:
+                customer_name:   { type: string, nullable: true }
+                customer_phone:  { type: string, nullable: true }
+                employee_id:     { type: integer, nullable: true }
+                total_amount:    { type: number }
+                tax_amount:      { type: number }
+                payment_mode:    { type: string, enum: [Cash, Card, UPI, Credit] }
+                invoice_no:      { type: string, nullable: true }
+                sub_total:       { type: number, nullable: true }
+                discount_amount: { type: number, nullable: true }
+                scheme_amount:   { type: number, nullable: true }
+                cr_dr_amount:    { type: number, nullable: true }
+                freight_amount:  { type: number, nullable: true }
+                round_off:       { type: number, nullable: true }
+                doctor_name:     { type: string, nullable: true }
+                rx_number:       { type: string, nullable: true }
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    properties:
+                      inventory_id: { type: integer, nullable: true }
+                      name:         { type: string, nullable: true }
+                      qty:          { type: integer }
+                      price:        { type: number }
+                      tax:          { type: number }
+                      free_qty:     { type: integer, nullable: true }
+                      trade_rate:   { type: number, nullable: true }
+                      scheme_pct:   { type: number, nullable: true }
+                      discount_pct: { type: number, nullable: true }
+      responses:
+        '201':
+          description: Sale created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, saleId, invoiceNo]
+                properties:
+                  message:   { type: string }
+                  saleId:    { type: integer, description: "NOTE: field is saleId not sale_id (MSW mock bug)" }
+                  invoiceNo: { type: string, description: "NOTE: field is invoiceNo not bill_no (MSW mock bug)" }
+        '400':
+          description: Empty items, no stock, or insufficient stock
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sales/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    get:
+      summary: Get sale with items
+      operationId: getSale
+      tags: [sales]
+      security: []
+      responses:
+        '200':
+          description: Sale detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaleDetail' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    put:
+      summary: Update sale header
+      operationId: updateSale
+      tags: [sales]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                customer_id:  { type: integer, nullable: true }
+                employee_id:  { type: integer, nullable: true }
+                total_amount: { type: number }
+                tax_amount:   { type: number }
+      responses:
+        '200':
+          description: Updated sale
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaleListItem' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    delete:
+      summary: Delete sale and restore inventory
+      operationId: deleteSale
+      tags: [sales]
+      security: []
+      responses:
+        '200':
+          description: Sale deleted, stock restored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  sale:    { $ref: '#/components/schemas/SaleListItem' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sales/invoice/{saleId}:
+    parameters:
+      - name: saleId
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      summary: Download sale invoice as PDF
+      operationId: getSaleInvoice
+      tags: [sales]
+      security: []
+      responses:
+        '200':
+          description: PDF invoice
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Sale not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sales/invoice/preview:
+    post:
+      summary: Preview invoice PDF without saving
+      operationId: previewInvoice
+      tags: [sales]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                customer:     { type: object }
+                items:        { type: array, items: { type: object } }
+                summary:      { type: object }
+                payment_mode: { type: string }
+                invoice_no:   { type: string }
+                store:        { type: object }
+      responses:
+        '200':
+          description: PDF preview
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  # ─── STORE ────────────────────────────────────────────────────────────────
+
+  /store:
+    get:
+      summary: Get store/shop settings
+      operationId: getStore
+      tags: [store]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Store settings (from DB if available, otherwise from .env)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StoreSettings' }
+
+  # ─── SUPPLIERS ────────────────────────────────────────────────────────────
+
+  /suppliers:
+    get:
+      summary: List suppliers
+      operationId: listSuppliers
+      tags: [suppliers]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Array of suppliers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Supplier' }
+
+    post:
+      summary: Create supplier
+      operationId: createSupplier
+      tags: [suppliers]
+      security: []
+      x-security-bug: BUG-01
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone]
+              properties:
+                name:           { type: string }
+                contact_person: { type: string, nullable: true }
+                phone:          { type: string }
+                email:          { type: string, nullable: true }
+                address:        { type: string, nullable: true }
+      responses:
+        '201':
+          description: Supplier created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+
+  /suppliers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    get:
+      summary: Get supplier by ID
+      operationId: getSupplier
+      tags: [suppliers]
+      security: []
+      responses:
+        '200':
+          description: Supplier found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    put:
+      summary: Update supplier
+      operationId: updateSupplier
+      tags: [suppliers]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:           { type: string }
+                contact_person: { type: string, nullable: true }
+                phone:          { type: string }
+                email:          { type: string, nullable: true }
+                address:        { type: string, nullable: true }
+      responses:
+        '200':
+          description: Updated supplier
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    delete:
+      summary: Delete supplier (admin only)
+      operationId: deleteSupplier
+      tags: [suppliers]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin]
+      responses:
+        '200':
+          description: Supplier deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:  { type: string }
+                  supplier: { $ref: '#/components/schemas/Supplier' }
+        '401': { description: Not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Not admin, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  # ─── WHOLESALE ─────────────────────────────────────────────────────────────
+  # BUG-01: GET and POST are public; DELETE is admin-only.
+  # BUG-08: POST has no idempotency guard.
+
+  /wholesale/sales:
+    get:
+      summary: List wholesale sales
+      operationId: listWholesaleSales
+      tags: [wholesale]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Wholesale sales list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WholesaleSale' }
+
+    post:
+      summary: Create wholesale sale
+      operationId: createWholesaleSale
+      tags: [wholesale]
+      security: []
+      x-security-bug: BUG-01
+      x-idempotency-bug: BUG-08
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [medicine_name, quantity, price_per_unit, shopkeeper_name]
+              properties:
+                medicine_name:   { type: string }
+                quantity:        { type: integer, minimum: 1 }
+                price_per_unit:  { type: number, minimum: 0 }
+                shopkeeper_name: { type: string }
+                gst_number:      { type: string, nullable: true }
+                sale_date:       { type: string, format: date }
+      responses:
+        '201':
+          description: Wholesale sale created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WholesaleSale' }
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /wholesale/sales/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    delete:
+      summary: Delete wholesale sale (admin only)
+      operationId: deleteWholesaleSale
+      tags: [wholesale]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin]
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '401': { description: Not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Not admin, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /wholesale/purchases:
+    get:
+      summary: List wholesale purchases
+      operationId: listWholesalePurchases
+      tags: [wholesale]
+      security: []
+      x-security-bug: BUG-01
+      responses:
+        '200':
+          description: Wholesale purchase list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WholesalePurchase' }
+
+    post:
+      summary: Create wholesale purchase
+      operationId: createWholesalePurchase
+      tags: [wholesale]
+      security: []
+      x-security-bug: BUG-01
+      x-idempotency-bug: BUG-08
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [medicine_name, quantity, price_per_unit, supplier_name]
+              properties:
+                medicine_name:  { type: string }
+                quantity:       { type: integer, minimum: 1 }
+                price_per_unit: { type: number, minimum: 0 }
+                supplier_name:  { type: string }
+                gst_number:     { type: string, nullable: true }
+                purchase_date:  { type: string, format: date }
+      responses:
+        '201':
+          description: Wholesale purchase created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WholesalePurchase' }
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /wholesale/purchases/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    delete:
+      summary: Delete wholesale purchase (admin only)
+      operationId: deleteWholesalePurchase
+      tags: [wholesale]
+      security:
+        - ClerkBearer: []
+      x-roles: [admin]
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '401': { description: Not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Not admin, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+tags:
+  - name: health
+    description: Server and DB health check
+  - name: auth
+    description: Clerk user synchronisation and admin listing
+  - name: customers
+    description: Retail customer CRUD (BUG-01 — currently public)
+  - name: employees
+    description: Staff management (auth required)
+  - name: inventory
+    description: Medicine master data and stock (partially protected)
+  - name: ocr
+    description: Invoice OCR scanning (BUG-05 — currently public, no validation)
+  - name: purchases
+    description: Stock purchase recording (BUG-01 — currently public)
+  - name: reports
+    description: Dashboard and sales trend reports (BUG-01 — currently public)
+  - name: sales
+    description: POS sales and invoice generation (BUG-01 — currently public)
+  - name: store
+    description: Shop profile/settings
+  - name: suppliers
+    description: Supplier CRUD (DELETE is admin-only)
+  - name: wholesale
+    description: Wholesale sales and purchases (DELETE is admin-only)

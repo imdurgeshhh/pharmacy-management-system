@@ -1,0 +1,13 @@
+{
+  "shop_name": "string",
+  "address": "string",
+  "dl_no": "string",
+  "pan_no": "string",
+  "aadhar_no": "string",
+  "food_lic_no": "string",
+  "phone": "string",
+  "email": "string",
+  "gstin": "string",
+  "pharmacist_name": "string",
+  "pharmacist_reg_no": "string"
+}
