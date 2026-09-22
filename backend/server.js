@@ -15,9 +15,21 @@ const PORT = process.env.PORT || 5000;
 // Trust proxy for secure IP rate limiting behind reverse proxies
 app.set('trust proxy', 1);
 
-// Middleware
+// Flexible CORS configuration: supports FRONTEND_URL, Vercel preview/prod domains, and localhost
+const configuredOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://localhost:5174')
+    .split(',')
+    .map(u => u.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        const normalized = origin.replace(/\/+$/, '');
+        if (configuredOrigins.includes(normalized)) return callback(null, true);
+        if (/^https:\/\/[\w-]+\.vercel\.app$/.test(normalized)) return callback(null, true);
+        if (/^http:\/\/localhost(:\d+)?$/.test(normalized)) return callback(null, true);
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
     credentials: true,
 }));
 app.use(express.json());
