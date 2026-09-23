@@ -56,8 +56,14 @@ const PurchaseItemsTable = ({
               <tbody className="divide-y divide-green-50">
                 {entries.map((e, i) => (
                   <tr key={i} className={`transition-colors ${editIdx === i ? 'bg-amber-50' : 'hover:bg-green-50/40'}`}>
-                    <td className="px-3 py-2.5 text-gray-600 font-mono tabular-nums">{i + 1}</td>
-                    <td className="px-3 py-2.5 font-semibold text-gray-800 max-w-[140px] truncate" title={e.medicine_name}>{e.medicine_name}</td>
+                    <td className="px-3 py-2.5 max-w-[160px] truncate" title={e.medicine_name}>
+                      <span className="font-semibold text-gray-800 block truncate">{e.medicine_name}</span>
+                      {(e.brand_name || e.strength || e.dosage_form) && (
+                        <span className="text-[10px] text-gray-500 block truncate">
+                          {[e.brand_name, e.dosage_form, e.strength].filter(Boolean).join(' • ')}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       {(() => {
                         const sched = (e.schedule || 'NONE').toUpperCase();

@@ -12,6 +12,16 @@ const GST_RATES = [0, 5, 12, 18, 28];
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const rupee = (n) => `₹${(Number(n) || 0).toFixed(2)}`;
 
+const CATEGORY_OPTIONS = [
+  'General', 'Antibiotic', 'Painkiller', 'Supplement',
+  'Cough & Cold', 'Allergy', 'Gastrointestinal', 'Other'
+];
+
+const FORM_OPTIONS = [
+  'Tablet', 'Capsule', 'Syrup', 'Injection',
+  'Cream', 'Gel', 'Drops', 'Other'
+];
+
 // ─── Auto-compute tax/discount/final for one row ──────────────────────────────
 const compute = (r) => {
   const price = parseFloat(r.price) || 0;
@@ -243,6 +253,11 @@ export default function Purchases() {
           mrp: parseFloat(m.mrp) || 0,
           purchase_price: parseFloat(m.purchase_price) || 0,
           schedule: (m.schedule || 'NONE').toUpperCase(),
+          brand_name: m.brand_name || '',
+          salt_composition: m.salt_composition || '',
+          category: m.medicine_category || m.category || 'General',
+          dosage_form: m.dosage_form || 'Tablet',
+          strength: m.strength || '',
         })).filter(m => m.label));
       })
       .catch(() => setMedicines([]));
@@ -273,6 +288,8 @@ export default function Purchases() {
   // ── Medicine add form ──────────────────────────────────────────────────────
   const blank = () => ({
     medicine_name: '', medicine_id: null,
+    brand_name: '', salt_composition: '',
+    category: 'General', dosage_form: 'Tablet', strength: '',
     batch_number: '', expiry_date: '',
     qty: '', price: '',
     gst_pct: 12, disc_pct: '',
@@ -295,6 +312,11 @@ export default function Purchases() {
       medicine_name: m.label,
       medicine_id: m.id,
       schedule: m.schedule || 'NONE',
+      brand_name: m.brand_name || '',
+      salt_composition: m.salt_composition || '',
+      category: m.category || 'General',
+      dosage_form: m.dosage_form || 'Tablet',
+      strength: m.strength || '',
       is_new: false,
       price: m.purchase_price ? String(m.purchase_price) : (m.mrp ? String(m.mrp) : p.price)
     }));
@@ -310,6 +332,11 @@ export default function Purchases() {
         medicine_name: val,
         medicine_id: match.id,
         schedule: match.schedule || 'NONE',
+        brand_name: match.brand_name || '',
+        salt_composition: match.salt_composition || '',
+        category: match.category || 'General',
+        dosage_form: match.dosage_form || 'Tablet',
+        strength: match.strength || '',
         is_new: false,
         price: p.price || (match.purchase_price ? String(match.purchase_price) : (match.mrp ? String(match.mrp) : p.price))
       }));
@@ -319,6 +346,11 @@ export default function Purchases() {
         medicine_name: val,
         medicine_id: null,
         schedule: p.medicine_id ? '' : p.schedule,
+        brand_name: p.medicine_id ? '' : p.brand_name,
+        salt_composition: p.medicine_id ? '' : p.salt_composition,
+        category: p.medicine_id ? 'General' : p.category,
+        dosage_form: p.medicine_id ? 'Tablet' : p.dosage_form,
+        strength: p.medicine_id ? '' : p.strength,
         is_new: true
       }));
     }
@@ -409,16 +441,21 @@ export default function Purchases() {
         total_amount: +totalAmt.toFixed(2),
         tax_amount:   +totalTax.toFixed(2),
         items: entries.map(e => ({
-          medicine_id:    e.medicine_id ? parseInt(e.medicine_id) : null,
-          medicine_name:  e.medicine_name,
-          schedule:       e.schedule || 'NONE',
-          batch_number:   e.batch_number,
-          qty:            parseFloat(e.qty),
-          price:          parseFloat(e.final),
-          tax:            e.tax_amt,
-          mrp:            parseFloat(e.price),
-          expiry_date:    e.expiry_date || null,
-          tax_percentage: parseFloat(e.gst_pct) || 0,
+          medicine_id:      e.medicine_id ? parseInt(e.medicine_id) : null,
+          medicine_name:    e.medicine_name,
+          schedule:         e.schedule || 'NONE',
+          brand_name:       e.brand_name || null,
+          salt_composition: e.salt_composition || null,
+          category:         e.category || 'General',
+          dosage_form:      e.dosage_form || null,
+          strength:         e.strength || null,
+          batch_number:     e.batch_number,
+          qty:              parseFloat(e.qty),
+          price:            parseFloat(e.final),
+          tax:              e.tax_amt,
+          mrp:              parseFloat(e.price),
+          expiry_date:      e.expiry_date || null,
+          tax_percentage:   parseFloat(e.gst_pct) || 0,
         })),
       });
 
@@ -610,7 +647,76 @@ export default function Purchases() {
               </div>
             </div>
 
-            {/* Row 2: qty, price, gst%, tax, disc%, disc */}
+            {/* Row 2: Medicine Attributes (Brand, Salt Composition, Category, Form, Strength) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-1">
+              <div>
+                <L t="Brand" htmlFor="med-brand" />
+                <input
+                  id="med-brand"
+                  value={form.brand_name}
+                  onChange={e => sf('brand_name', e.target.value)}
+                  placeholder="e.g. Cipla, Crocin…"
+                  aria-label="Brand"
+                  className={iCls}
+                />
+              </div>
+
+              <div>
+                <L t="Salt Composition" htmlFor="med-salt" />
+                <input
+                  id="med-salt"
+                  value={form.salt_composition}
+                  onChange={e => sf('salt_composition', e.target.value)}
+                  placeholder="e.g. Paracetamol 500mg…"
+                  aria-label="Salt composition"
+                  className={iCls}
+                />
+              </div>
+
+              <div>
+                <L t="Category" htmlFor="med-category" />
+                <select
+                  id="med-category"
+                  value={form.category}
+                  onChange={e => sf('category', e.target.value)}
+                  aria-label="Category"
+                  className={`${iCls} cursor-pointer`}
+                >
+                  {CATEGORY_OPTIONS.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <L t="Form" htmlFor="med-form" />
+                <select
+                  id="med-form"
+                  value={form.dosage_form}
+                  onChange={e => sf('dosage_form', e.target.value)}
+                  aria-label="Dosage Form"
+                  className={`${iCls} cursor-pointer`}
+                >
+                  {FORM_OPTIONS.map(f => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <L t="Strength" htmlFor="med-strength" />
+                <input
+                  id="med-strength"
+                  value={form.strength}
+                  onChange={e => sf('strength', e.target.value)}
+                  placeholder="e.g. 500mg, 10ml…"
+                  aria-label="Strength"
+                  className={iCls}
+                />
+              </div>
+            </div>
+
+            {/* Row 3: qty, price, gst%, tax, disc%, disc */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <div>
                 <L t="Qty *" htmlFor="med-qty" />

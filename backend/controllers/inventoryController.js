@@ -252,7 +252,7 @@ exports.getAlerts = async (req, res) => {
             FROM INVENTORY i
             JOIN MEDICINES m ON i.medicine_id = m.id
             WHERE i.admin_id = $1 
-              AND (i.stock_qty < 20 OR i.expiry_date <= CURRENT_DATE + INTERVAL '30 days')
+              AND (i.stock_qty < 20 OR i.expiry_date <= CURRENT_DATE + INTERVAL '90 days')
             ORDER BY i.expiry_date ASC
         `;
         const result = await pool.query(query, [adminId]);

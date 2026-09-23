@@ -118,7 +118,7 @@ const Dashboard = () => {
     const expiring  = alerts.filter(a => {
         if (!a.expiry_date) return false;
         const d = differenceInDays(parseISO(a.expiry_date), today);
-        return d >= 0 && d <= 30;
+        return d >= 0 && d <= 90;
     });
     const expired   = alerts.filter(a => {
         if (!a.expiry_date) return false;
@@ -189,7 +189,7 @@ const Dashboard = () => {
                 <StatCard
                     label="Expiring Soon"
                     value={expiringCount}
-                    sub="Within 30 days"
+                    sub="Within 90 days"
                     icon={Clock}
                     iconBg="bg-red-50"
                     iconColor="text-red-700"
@@ -222,13 +222,13 @@ const Dashboard = () => {
                             )}
                         </li>
 
-                        {/* Expiring in 30 days */}
+                        {/* Expiring in 90 days */}
                         <li className="mb-4">
-                            <SectionHeader icon={Clock} title="Expiring in 30 Days" count={expiring.length} />
+                            <SectionHeader icon={Clock} title="Expiring in 90 Days" count={expiring.length} />
                             {expiring.length === 0 ? (
-                                <p className="text-xs text-gray-600 py-2">None expiring in the next 30 days.</p>
+                                <p className="text-xs text-gray-600 py-2">None expiring in the next 90 days.</p>
                             ) : (
-                                <ul role="list" aria-label="Medicines expiring within 30 days" className="divide-y divide-gray-50 list-none p-0 m-0">
+                                <ul role="list" aria-label="Medicines expiring within 90 days" className="divide-y divide-gray-50 list-none p-0 m-0">
                                     {expiring.map((a, i) => (
                                         <AlertRow key={i} name={a.name} batch={a.batch_number} stock={a.stock_qty}
                                             expiry={a.expiry_date} type="expiring" />

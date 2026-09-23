@@ -154,18 +154,8 @@ describe('Integration: Inventory Schedule & Filter Flow', () => {
     });
   });
 
-  it('opens Add Medicine modal with Drug Schedule dropdown', async () => {
-    const user = userEvent.setup();
+  it('ensures Inventory is read-only summary with Add Medicine button removed', () => {
     render(<Inventory />);
-
-    const addButton = screen.getByRole('button', { name: /Add Medicine/i });
-    await user.click(addButton);
-
-    expect(screen.getByRole('heading', { name: /Add New Medicine/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Drug Schedule/i)).toBeInTheDocument();
-
-    const scheduleSelect = screen.getByLabelText(/Drug Schedule/i);
-    await user.selectOptions(scheduleSelect, 'H1');
-    expect(scheduleSelect.value).toBe('H1');
+    expect(screen.queryByRole('button', { name: /Add Medicine/i })).not.toBeInTheDocument();
   });
 });

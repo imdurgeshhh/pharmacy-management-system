@@ -3,15 +3,37 @@ const { pool } = require('../config/db');
 const VALID_SCHEDULES = ['NONE', 'G', 'H', 'H1', 'X'];
 
 // Helper: find an existing medicine by name within this tenant or create one
-async function findOrCreateMedicine(client, medicineName, schedule, adminId) {
+async function findOrCreateMedicine(client, medicineName, schedule, adminId, extra = {}) {
     const name = (medicineName || '').trim();
     if (!name) throw new Error('Medicine name is required');
+
+    const brandName = (extra.brand_name || extra.brand || '').trim() || null;
+    const saltComp = (extra.salt_composition || extra.salt || '').trim() || null;
+    const category = (extra.category || extra.medicine_category || 'General').trim() || 'General';
+    const dosageForm = (extra.dosage_form || extra.form || '').trim() || null;
+    const strength = (extra.strength || '').trim() || null;
 
     const existing = await client.query(
         `SELECT id, schedule FROM medicines WHERE LOWER(name) = LOWER($1) AND admin_id = $2 LIMIT 1`,
         [name, adminId]
     );
-    if (existing.rows.length > 0) return existing.rows[0].id;
+    if (existing.rows.length > 0) {
+        const medId = existing.rows[0].id;
+        if (brandName || saltComp || category !== 'General' || dosageForm || strength) {
+            await client.query(
+                `UPDATE medicines SET
+                    brand_name = COALESCE(NULLIF($1, ''), brand_name),
+                    salt_composition = COALESCE(NULLIF($2, ''), salt_composition),
+                    category = COALESCE(NULLIF($3, ''), category),
+                    medicine_category = COALESCE(NULLIF($3, ''), medicine_category),
+                    dosage_form = COALESCE(NULLIF($4, ''), dosage_form),
+                    strength = COALESCE(NULLIF($5, ''), strength)
+                 WHERE id = $6 AND admin_id = $7`,
+                [brandName, saltComp, category, dosageForm, strength, medId, adminId]
+            );
+        }
+        return medId;
+    }
 
     const medSchedule = (schedule || '').toString().toUpperCase().trim();
     if (!medSchedule || !VALID_SCHEDULES.includes(medSchedule)) {
@@ -21,9 +43,13 @@ async function findOrCreateMedicine(client, medicineName, schedule, adminId) {
     }
 
     const created = await client.query(
-        `INSERT INTO medicines (name, medicine_name, category, medicine_category, barcode, description, schedule, admin_id)
-         VALUES ($1, $1, 'General', 'General', NULL, '', $2, $3) RETURNING id`,
-        [name, medSchedule, adminId]
+        `INSERT INTO medicines (
+            name, medicine_name, brand_name, salt_composition,
+            category, medicine_category, dosage_form, strength,
+            barcode, description, schedule, admin_id
+         )
+         VALUES ($1, $1, $2, $3, $4, $4, $5, $6, NULL, '', $7, $8) RETURNING id`,
+        [name, brandName, saltComp, category, dosageForm, strength, medSchedule, adminId]
     );
     return created.rows[0].id;
 }
@@ -68,7 +94,7 @@ exports.createPurchase = async (req, res) => {
 
             if (!medicineId) {
                 const medName = item.name || item.medicine_name;
-                medicineId = await findOrCreateMedicine(client, medName, item.schedule, adminId);
+                medicineId = await findOrCreateMedicine(client, medName, item.schedule, adminId, item);
             } else {
                 // Verify provided medicine_id belongs to this tenant
                 const medOwnerCheck = await client.query(
@@ -79,6 +105,26 @@ exports.createPurchase = async (req, res) => {
                     const err = new Error('Invalid medicine ID');
                     err.statusCode = 400;
                     throw err;
+                }
+
+                const brandName = (item.brand_name || item.brand || '').trim() || null;
+                const saltComp = (item.salt_composition || item.salt || '').trim() || null;
+                const category = (item.category || item.medicine_category || '').trim() || null;
+                const dosageForm = (item.dosage_form || item.form || '').trim() || null;
+                const strength = (item.strength || '').trim() || null;
+
+                if (brandName || saltComp || category || dosageForm || strength) {
+                    await client.query(
+                        `UPDATE medicines SET
+                            brand_name = COALESCE(NULLIF($1, ''), brand_name),
+                            salt_composition = COALESCE(NULLIF($2, ''), salt_composition),
+                            category = COALESCE(NULLIF($3, ''), category),
+                            medicine_category = COALESCE(NULLIF($3, ''), medicine_category),
+                            dosage_form = COALESCE(NULLIF($4, ''), dosage_form),
+                            strength = COALESCE(NULLIF($5, ''), strength)
+                         WHERE id = $6 AND admin_id = $7`,
+                        [brandName, saltComp, category, dosageForm, strength, medicineId, adminId]
+                    );
                 }
             }
 
