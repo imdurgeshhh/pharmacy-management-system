@@ -98,6 +98,55 @@ test('Module: purchases', async (t) => {
     assert.ok(rows.rows.length > 0, 'Inventory must be created for the medicine');
   });
 
+  await t.test('[Bug 1 Fix] POST /purchases stock entry appears in GET /wholesale/purchases and updates inventory', async () => {
+    auth.asAdmin();
+    const batchNo = `BATCH-VERIFY-${Date.now()}`;
+    const payload = {
+      supplier_id: supplier.id,
+      total_amount: 1500,
+      tax_amount: 150,
+      items: [{
+        medicine_name: medicine.name,
+        medicine_id: medicine.id,
+        batch_number: batchNo,
+        qty: 25,
+        price: 60.00,
+        mrp: 90.00,
+        tax: 6,
+        tax_percentage: 10,
+        schedule: 'G',
+        expiry_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      }],
+    };
+
+    const postRes = await request(app)
+      .post('/api/purchases')
+      .send(payload)
+      .expect(201);
+    assert.ok(postRes.body.purchaseId);
+
+    // 1. Verify it appears in Wholesale Purchases report endpoint
+    const wholesaleRes = await request(app)
+      .get('/api/wholesale/purchases')
+      .expect(200);
+    assert.ok(Array.isArray(wholesaleRes.body));
+    const foundWholesale = wholesaleRes.body.find(row => 
+      (row.medicine_name === medicine.name || row.item === medicine.name) &&
+      row.quantity === 25
+    );
+    assert.ok(foundWholesale, 'Newly added purchase entry must appear in /wholesale/purchases');
+    assert.equal(parseFloat(foundWholesale.price_per_unit), 60.00);
+    assert.equal(parseFloat(foundWholesale.total_amount), 1500.00);
+
+    // 2. Verify inventory quantity reflects the new entry
+    const invRes = await request(app)
+      .get('/api/inventory')
+      .expect(200);
+    const foundInv = invRes.body.find(i => i.id === medicine.id || i.medicine_id === medicine.id);
+    assert.ok(foundInv, 'Medicine must exist in inventory list');
+    assert.ok(Number(foundInv.total_stock || foundInv.stock_qty) >= 25, 'Inventory quantity must reflect the added stock');
+  });
+
   await t.test('POST /purchases → 400 when items array is empty', async () => {
     auth.asAdmin();
     const res = await request(app)

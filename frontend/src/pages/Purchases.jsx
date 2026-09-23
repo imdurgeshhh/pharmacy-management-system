@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import PurchaseItemsTable from '../components/purchases/PurchaseItemsTable';
 import { SCHEDULE_CONFIG, SCHEDULE_OPTIONS } from '../utils/scheduleConfig';
+import useStore, { defaultPurchaseForm } from '../store/useStore';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const GST_RATES = [0, 5, 12, 18, 28];
@@ -23,14 +24,14 @@ const FORM_OPTIONS = [
 ];
 
 // ─── Auto-compute tax/discount/final for one row ──────────────────────────────
-const compute = (r) => {
-  const price = parseFloat(r.price) || 0;
-  const gst   = parseFloat(r.gst_pct) || 0;
-  const disc  = parseFloat(r.disc_pct) || 0;
+const compute = (r = {}) => {
+  const price = parseFloat(r?.price) || 0;
+  const gst   = parseFloat(r?.gst_pct) || 0;
+  const disc  = parseFloat(r?.disc_pct) || 0;
   const tax_amt  = +(price * gst  / 100).toFixed(2);
   const disc_amt = +(price * disc / 100).toFixed(2);
   const final    = +(price - disc_amt + tax_amt).toFixed(2);
-  return { ...r, tax_amt, disc_amt, final };
+  return { ...(r || {}), tax_amt, disc_amt, final };
 };
 
 // ─── Input styles ─────────────────────────────────────────────────────────────
@@ -272,34 +273,42 @@ export default function Purchases() {
     loadMedicines();
   }, []);
 
-  // ── Supplier section ───────────────────────────────────────────────────────
-  const [supplierId, setSupplierId] = useState(null);
-  const [suppGst, setSuppGst]       = useState('');
-  const [invoiceNo, setInvoiceNo]   = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(todayStr());
-  const [suppConfirmed, setSuppConfirmed] = useState(false);
+  // ── Zustand Draft Slice (survives route navigation without full refresh) ───
+  const purchaseDraft = useStore(state => state.purchaseDraft);
+  const setPurchaseDraft = useStore(state => state.setPurchaseDraft);
+  const clearPurchaseDraft = useStore(state => state.clearPurchaseDraft);
+  const invalidatePurchasesAndStock = useStore(state => state.invalidatePurchasesAndStock);
+
+  const {
+    supplierId = null,
+    suppGst = '',
+    invoiceNo = '',
+    invoiceDate = todayStr(),
+    suppConfirmed = false,
+    form = defaultPurchaseForm(),
+    entries = [],
+    editIdx = null,
+  } = purchaseDraft || {};
+
+  const setSupplierId = (val) => setPurchaseDraft(d => ({ supplierId: typeof val === 'function' ? val(d.supplierId) : val }));
+  const setSuppGst = (val) => setPurchaseDraft(d => ({ suppGst: typeof val === 'function' ? val(d.suppGst) : val }));
+  const setInvoiceNo = (val) => setPurchaseDraft(d => ({ invoiceNo: typeof val === 'function' ? val(d.invoiceNo) : val }));
+  const setInvoiceDate = (val) => setPurchaseDraft(d => ({ invoiceDate: typeof val === 'function' ? val(d.invoiceDate) : val }));
+  const setSuppConfirmed = (val) => setPurchaseDraft(d => ({ suppConfirmed: typeof val === 'function' ? val(d.suppConfirmed) : val }));
+  const setForm = (val) => setPurchaseDraft(d => ({ form: typeof val === 'function' ? val(d.form || defaultPurchaseForm()) : val }));
+  const setEntries = (val) => setPurchaseDraft(d => ({ entries: typeof val === 'function' ? val(d.entries || []) : val }));
+  const setEditIdx = (val) => setPurchaseDraft(d => ({ editIdx: typeof val === 'function' ? val(d.editIdx) : val }));
+
+  const [formValidationMsg, setFormValidationMsg] = useState('');
+  const blank = defaultPurchaseForm;
 
   const handlePickSupplier = (s) => {
-    setSupplierId(s.id);
-    setSuppGst(s.gst_number || '');
-    setSuppConfirmed(false);
+    setPurchaseDraft({
+      supplierId: s.id,
+      suppGst: s.gst_number || '',
+      suppConfirmed: false
+    });
   };
-
-  // ── Medicine add form ──────────────────────────────────────────────────────
-  const blank = () => ({
-    medicine_name: '', medicine_id: null,
-    brand_name: '', salt_composition: '',
-    category: 'General', dosage_form: 'Tablet', strength: '',
-    batch_number: '', expiry_date: '',
-    qty: '', price: '',
-    gst_pct: 12, disc_pct: '',
-    schedule: '',
-    is_new: true,
-  });
-
-  const [form, setForm]     = useState(blank());
-  const [editIdx, setEditIdx] = useState(null);
-  const [formValidationMsg, setFormValidationMsg] = useState('');
 
   const sf = (k, v) => {
     setForm(p => ({ ...p, [k]: v }));
@@ -357,39 +366,38 @@ export default function Purchases() {
   };
 
   const cForm = compute(form);
+  const isEditing = editIdx !== null && editIdx !== undefined && !Number.isNaN(Number(editIdx));
   const canAdd = Boolean(
-    form.medicine_name.trim() &&
-    form.batch_number.trim() &&
-    form.qty &&
-    form.price &&
-    (!form.is_new || form.schedule)
+    form?.medicine_name?.trim() &&
+    form?.batch_number?.trim() &&
+    form?.qty &&
+    form?.price &&
+    (!form?.is_new || form?.schedule)
   );
 
   // ── Entries list ───────────────────────────────────────────────────────────
-  const [entries, setEntries] = useState([]);
-
   const addOrUpdate = () => {
-    if (!form.medicine_name.trim()) {
+    if (!form?.medicine_name?.trim()) {
       setFormValidationMsg('Please enter or select a medicine name.');
       document.getElementById('med-name')?.focus();
       return;
     }
-    if (form.is_new && !form.schedule) {
+    if (form?.is_new && !form?.schedule) {
       setFormValidationMsg('Please select a drug schedule for this new medicine.');
       document.getElementById('med-schedule')?.focus();
       return;
     }
-    if (!form.batch_number.trim()) {
+    if (!form?.batch_number?.trim()) {
       setFormValidationMsg('Please enter a batch number.');
       document.getElementById('med-batch')?.focus();
       return;
     }
-    if (!form.qty || parseFloat(form.qty) <= 0) {
+    if (!form?.qty || parseFloat(form.qty) <= 0) {
       setFormValidationMsg('Please enter a valid quantity greater than zero.');
       document.getElementById('med-qty')?.focus();
       return;
     }
-    if (!form.price || parseFloat(form.price) <= 0) {
+    if (!form?.price || parseFloat(form.price) <= 0) {
       setFormValidationMsg('Please enter a valid purchase price.');
       document.getElementById('med-price')?.focus();
       return;
@@ -398,14 +406,14 @@ export default function Purchases() {
     setFormValidationMsg('');
     const row = {
       ...compute(form),
-      schedule: form.schedule || 'NONE',
-      is_new: form.is_new
+      schedule: form?.schedule || 'NONE',
+      is_new: form?.is_new
     };
-    if (editIdx !== null) {
-      setEntries(p => p.map((e, i) => i === editIdx ? row : e));
+    if (isEditing) {
+      setEntries(p => (p || []).map((e, i) => i === editIdx ? row : e));
       setEditIdx(null);
     } else {
-      setEntries(p => [...p, row]);
+      setEntries(p => [...(p || []), row]);
     }
     setForm(blank());
   };
@@ -460,9 +468,8 @@ export default function Purchases() {
       });
 
       alert(`✅ ${entries.length} medicine(s) saved to stock!`);
-      setEntries([]); setForm(blank()); setEditIdx(null);
-      setSupplierId(null); setSuppGst(''); setInvoiceNo('');
-      setInvoiceDate(todayStr()); setSuppConfirmed(false);
+      clearPurchaseDraft();
+      invalidatePurchasesAndStock();
       loadMedicines(); // Refresh medicines list with any newly added medicine
     } catch (err) {
       alert('Save failed: ' + (err?.response?.data?.error || err.message));
@@ -495,7 +502,7 @@ export default function Purchases() {
             <span className="text-green-100"><PackagePlus size={17} aria-hidden="true" /></span>
             <h2 className="text-sm font-bold text-white tracking-wide">Stock Entry Form</h2>
           </div>
-          {editIdx !== null && (
+          {isEditing && (
             <button
               type="button"
               onClick={() => { setForm(blank()); setEditIdx(null); setFormValidationMsg(''); }}
@@ -575,7 +582,7 @@ export default function Purchases() {
             <legend className="px-3 py-1 text-xs font-bold uppercase tracking-wider text-green-950 bg-white rounded-xl border border-green-200 shadow-sm flex items-center gap-2">
               <span className="flex items-center justify-center w-5 h-5 rounded-full bg-green-800 text-white text-[10px] font-bold shrink-0" aria-hidden="true">2</span>
               <Plus size={15} className="text-green-800" aria-hidden="true" />
-              <span>{editIdx !== null ? `Editing Entry #${editIdx + 1}` : 'Medicine Item Entry'}</span>
+              <span>{isEditing ? `Editing Entry #${Number(editIdx) + 1}` : 'Medicine Item Entry'}</span>
             </legend>
 
             {/* Row 1: name, schedule, batch, expiry */}
@@ -627,7 +634,7 @@ export default function Purchases() {
                     ))}
                   </select>
                 )}
-                {form.is_new && form.medicine_name.trim() && !form.schedule && (
+                {form?.is_new && form?.medicine_name?.trim() && !form?.schedule && (
                   <p className="text-[11px] text-amber-700 mt-1 font-semibold flex items-center gap-1">
                     <span>* Required for new medicine</span>
                   </p>
@@ -797,9 +804,7 @@ export default function Purchases() {
         onStartEdit={startEdit}
         onDeleteRow={deleteRow}
         onClearAll={() => {
-          setEntries([]);
-          setForm(blank());
-          setEditIdx(null);
+          clearPurchaseDraft();
           setFormValidationMsg('');
         }}
         onSave={handleSave}

@@ -168,4 +168,67 @@ describe('store/useStore.js', () => {
       expect(useStore.getState().cart).toEqual([]);
     });
   });
+
+  describe('Purchase Draft Actions (Bug 2 Fix)', () => {
+    it('initializes with a blank purchase draft', () => {
+      const state = useStore.getState();
+      expect(state.purchaseDraft).toBeDefined();
+      expect(state.purchaseDraft.supplierId).toBeNull();
+      expect(state.purchaseDraft.invoiceNo).toBe('');
+      expect(state.purchaseDraft.entries).toEqual([]);
+      expect(state.purchaseDraft.form.medicine_name).toBe('');
+    });
+
+    it('updates draft form and supplier details and preserves them', () => {
+      useStore.getState().setPurchaseDraft({
+        supplierId: 42,
+        suppGst: '29ABCDE1234F1Z5',
+        invoiceNo: 'INV-TEST-99',
+        entries: [{ medicine_name: 'Dolo 650', qty: 50, price: 30 }],
+      });
+
+      const state = useStore.getState();
+      expect(state.purchaseDraft.supplierId).toBe(42);
+      expect(state.purchaseDraft.suppGst).toBe('29ABCDE1234F1Z5');
+      expect(state.purchaseDraft.invoiceNo).toBe('INV-TEST-99');
+      expect(state.purchaseDraft.entries).toHaveLength(1);
+      expect(state.purchaseDraft.entries[0].medicine_name).toBe('Dolo 650');
+    });
+
+    it('clears purchase draft on clearPurchaseDraft()', () => {
+      useStore.getState().setPurchaseDraft({
+        supplierId: 42,
+        invoiceNo: 'INV-TEST-99',
+      });
+      useStore.getState().clearPurchaseDraft();
+
+      const state = useStore.getState();
+      expect(state.purchaseDraft.supplierId).toBeNull();
+      expect(state.purchaseDraft.invoiceNo).toBe('');
+      expect(state.purchaseDraft.entries).toEqual([]);
+    });
+
+    it('increments inventoryVersion and reportsVersion on invalidatePurchasesAndStock()', () => {
+      const beforeInv = useStore.getState().inventoryVersion;
+      const beforeRep = useStore.getState().reportsVersion;
+
+      useStore.getState().invalidatePurchasesAndStock();
+
+      expect(useStore.getState().inventoryVersion).toBe(beforeInv + 1);
+      expect(useStore.getState().reportsVersion).toBe(beforeRep + 1);
+    });
+
+    it('does not persist purchase draft to localStorage (memory-only)', () => {
+      useStore.getState().setPurchaseDraft({
+        supplierId: 99,
+        invoiceNo: 'DRAFT-IN-MEMORY-ONLY',
+      });
+
+      const raw = localStorage.getItem('pharma-storage');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        expect(parsed.state?.purchaseDraft).toBeUndefined();
+      }
+    });
+  });
 });

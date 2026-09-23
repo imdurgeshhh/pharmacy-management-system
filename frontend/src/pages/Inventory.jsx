@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../config/axios';
+import useStore from '../store/useStore';
 import RoleGuard from '../components/RoleGuard';
 import { Edit2, Trash2, Package, X, Save, Search, RotateCcw } from 'lucide-react';
 import Modal from '../components/common/Modal';
@@ -60,6 +61,7 @@ const Inventory = () => {
     const [inventory, setInventory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState('');
+    const inventoryVersion = useStore(state => state.inventoryVersion);
 
     // Search and filter states
     const [searchTerm, setSearchTerm] = useState('');
@@ -94,13 +96,13 @@ const Inventory = () => {
         }
     }, [showModal, showDeleteModal]);
 
-    // Fetch inventory with debouncing for search/filter
+    // Fetch inventory with debouncing for search/filter and invalidation trigger
     useEffect(() => {
         const timer = setTimeout(() => {
             fetchInventory(searchTerm, selectedSchedule);
         }, 300);
         return () => clearTimeout(timer);
-    }, [searchTerm, selectedSchedule]);
+    }, [searchTerm, selectedSchedule, inventoryVersion]);
 
     const fetchInventory = async (search = searchTerm, schedule = selectedSchedule) => {
         setLoading(true);

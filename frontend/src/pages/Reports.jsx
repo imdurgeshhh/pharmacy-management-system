@@ -3,6 +3,7 @@ import api from '../config/axios';
 import { format } from 'date-fns';
 import { Download, Layers, ShoppingCart, TrendingUp, Receipt, FileSpreadsheet } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../utils/exportData';
+import useStore from '../store/useStore';
 
 const toDateLabel = (value) => {
     if (!value) return '—';
@@ -117,6 +118,7 @@ const Reports = () => {
     const [customerBilling, setCustomerBilling] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const reportsVersion = useStore(state => state.reportsVersion);
 
     useEffect(() => {
         document.title = 'Ledger & Reports — Pharma';
@@ -143,7 +145,7 @@ const Reports = () => {
             }
         };
         fetchReports();
-    }, []);
+    }, [reportsVersion]);
 
     const activeTabConfig = TABS.find(t => t.key === activeTab);
     const accentColor = `rgb(${activeTabConfig?.color})`;

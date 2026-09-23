@@ -12,12 +12,44 @@ import { persist } from 'zustand/middleware';
  * - `user` here holds that DB profile (id, name, email, role).
  * - There is NO token stored here; session tokens are managed by Clerk.
  */
+export const defaultPurchaseForm = () => ({
+    medicine_id: null,
+    medicine_name: '',
+    schedule: '',
+    batch_number: '',
+    expiry_date: '',
+    brand_name: '',
+    salt_composition: '',
+    category: 'General',
+    dosage_form: 'Tablet',
+    strength: '',
+    qty: '',
+    price: '',
+    gst_pct: 12,
+    disc_pct: '',
+    is_new: false,
+});
+
+export const defaultPurchaseDraft = () => ({
+    supplierId: null,
+    suppGst: '',
+    invoiceNo: '',
+    invoiceDate: new Date().toISOString().slice(0, 10),
+    suppConfirmed: false,
+    form: defaultPurchaseForm(),
+    entries: [],
+    editIdx: null,
+});
+
 const useStore = create(
     persist(
         (set, get) => ({
             user: null,
             token: null,
             cart: [],
+            purchaseDraft: defaultPurchaseDraft(),
+            inventoryVersion: 0,
+            reportsVersion: 0,
 
             // Set the DB user profile (populated by ClerkAuthSync)
             setUser: (user) => set((state) => ({
@@ -26,7 +58,12 @@ const useStore = create(
             })),
 
             // Clear user on sign-out (called from App.jsx after Clerk sign-out)
-            logout: () => set({ user: null, token: null, cart: [] }),
+            logout: () => set({
+                user: null,
+                token: null,
+                cart: [],
+                purchaseDraft: defaultPurchaseDraft(),
+            }),
 
             // Token & Role helpers — role comes from the local DB, not Clerk metadata
             getToken: () => get().token,
@@ -35,6 +72,25 @@ const useStore = create(
             isAdmin: () => get().getRole() === 'admin',
             isEmployee: () => get().getRole() === 'employee',
             isAuthenticated: () => !!get().user && get().token !== null,
+
+            // Purchase draft actions (in-memory only, survives route changes)
+            setPurchaseDraft: (updater) => set((state) => {
+                const current = state.purchaseDraft || defaultPurchaseDraft();
+                const next = typeof updater === 'function' ? updater(current) : updater;
+                return {
+                    purchaseDraft: {
+                        ...current,
+                        ...(next || {})
+                    }
+                };
+            }),
+            clearPurchaseDraft: () => set({ purchaseDraft: defaultPurchaseDraft() }),
+
+            // Version counters for invalidating and refetching views
+            invalidatePurchasesAndStock: () => set((state) => ({
+                inventoryVersion: state.inventoryVersion + 1,
+                reportsVersion: state.reportsVersion + 1
+            })),
 
             // Cart actions
             addToCart: (item) => set((state) => {
