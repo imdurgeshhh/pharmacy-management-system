@@ -1,5 +1,7 @@
 {
   "scripts": {
+    "start": "node backend/server.js",
+    "build": "npm --prefix backend install",
     "test": "cd frontend && npm run test",
     "test:coverage": "cd frontend && npm run test:coverage",
     "test:e2e": "npx playwright test",
