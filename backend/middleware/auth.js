@@ -116,9 +116,9 @@ const authenticateToken = async (req, res, next) => {
   req.role = user.role ? user.role.toLowerCase() : 'guest';
   req._dbRole = req.role;
 
-  // Derive tenant ownership: Admin owns their own id; Shopkeeper/Employee belongs to admin_id
+  // Derive tenant ownership: Admin owns their own id unless explicitly assigned to another admin tenant; Shopkeeper/Employee belongs to admin_id
   if (req.role === 'admin') {
-    req.adminId = user.id;
+    req.adminId = user.admin_id ? Number(user.admin_id) : user.id;
   } else {
     req.adminId = user.admin_id ? Number(user.admin_id) : null;
   }

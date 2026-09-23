@@ -184,7 +184,7 @@ const ClerkAuthSync = ({ children }) => {
           syncedUserIdRef.current = clerkUser.id;
           setUser({ ...res.data.user, clerk_id: clerkUser.id });
         } catch (error) {
-          console.error('Backend sync failed, falling back to restricted shopkeeper role:', error);
+          console.error('Backend sync failed, falling back to restricted shopkeeper role:', error?.response?.data || error);
           // Fail closed: fall back to lowest privilege ('shopkeeper'), never 'admin'
           syncedUserIdRef.current = clerkUser.id;
           setUser({

@@ -50,3 +50,7 @@ exports.getSalesReport = async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch sales report' });
     }
 };
+
+const wholesaleController = require('./wholesaleController');
+exports.getWholesalePurchases = wholesaleController.getWholesalePurchases;
+

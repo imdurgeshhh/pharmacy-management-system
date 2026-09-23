@@ -103,10 +103,55 @@ exports.deleteWholesaleSale = async (req, res) => {
 exports.getWholesalePurchases = async (req, res) => {
     try {
         const adminId = req.adminId;
-        const result = await pool.query(
-            'SELECT * FROM WHOLESALE_PURCHASES WHERE admin_id = $1 ORDER BY purchase_date DESC, created_at DESC',
-            [adminId]
-        );
+        const query = `
+            SELECT 
+                id,
+                medicine_name,
+                quantity,
+                price_per_unit,
+                total_amount,
+                gst_number,
+                supplier_name,
+                purchase_date,
+                created_at,
+                admin_id
+            FROM (
+                SELECT 
+                    id,
+                    medicine_name,
+                    quantity,
+                    price_per_unit,
+                    total_amount,
+                    gst_number,
+                    supplier_name,
+                    purchase_date,
+                    created_at,
+                    admin_id
+                FROM WHOLESALE_PURCHASES
+                WHERE admin_id = $1
+
+                UNION ALL
+
+                SELECT 
+                    pi.id,
+                    COALESCE(m.medicine_name, m.name, '—') AS medicine_name,
+                    pi.qty AS quantity,
+                    pi.price AS price_per_unit,
+                    ROUND((pi.qty * pi.price)::numeric, 2) AS total_amount,
+                    NULL::varchar AS gst_number,
+                    COALESCE(s.name, '—') AS supplier_name,
+                    p.created_at::date AS purchase_date,
+                    p.created_at,
+                    p.admin_id
+                FROM purchase_items pi
+                JOIN purchases p ON pi.purchase_id = p.id
+                LEFT JOIN medicines m ON pi.medicine_id = m.id
+                LEFT JOIN suppliers s ON p.supplier_id = s.id
+                WHERE p.admin_id = $1
+            ) combined
+            ORDER BY purchase_date DESC, created_at DESC
+        `;
+        const result = await pool.query(query, [adminId]);
         res.json(result.rows);
     } catch (error) {
         console.error(error);

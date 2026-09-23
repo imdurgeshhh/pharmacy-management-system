@@ -11,15 +11,17 @@ const toDateLabel = (value) => {
     return format(parsed, 'MMM dd, yyyy');
 };
 
-const mapWholesalePurchase = (row) => ({
+const mapWholesalePurchase = (row, index) => ({
     id: row.id,
+    key: `${row.id}-${row.medicine_name || row.item || ''}-${index}`,
     date: row.purchase_date || row.created_at,
-    supplier: row.supplier_name || '—',
-    item: row.medicine_name || '—',
-    qty: Number(row.quantity || 0),
-    rate: Number(row.price_per_unit || 0),
-    total: Number(row.total_amount || 0),
+    supplier: row.supplier_name || row.supplier || '—',
+    item: row.medicine_name || row.item || '—',
+    qty: Number(row.quantity ?? row.qty ?? 0),
+    rate: Number(row.price_per_unit ?? row.rate ?? 0),
+    total: Number(row.total_amount ?? row.total ?? 0),
 });
+
 
 const mapWholesaleSale = (row) => ({
     id: row.id,
@@ -347,7 +349,7 @@ const Reports = () => {
                                         </td>
                                     </tr>
                                 ) : wholesalePurchases.map((row) => (
-                                    <tr key={row.id} className="bg-transparent hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition-colors">
+                                    <tr key={row.key || row.id} className="bg-transparent hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition-colors">
                                         <td className="p-5 font-mono text-xs tabular-nums text-slate-700 dark:text-slate-400">{String(row.id).padStart(3,'0')}</td>
                                         <td className="p-5 text-slate-800 dark:text-slate-200 font-medium tabular-nums">{toDateLabel(row.date)}</td>
                                         <td className="p-5 font-bold text-slate-900 dark:text-white">{row.supplier}</td>

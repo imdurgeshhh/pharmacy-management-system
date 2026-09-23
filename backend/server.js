@@ -26,18 +26,32 @@ app.use(cors({
         if (!origin) return callback(null, true);
         const normalized = origin.replace(/\/+$/, '');
         if (configuredOrigins.includes(normalized)) return callback(null, true);
-        if (/^https:\/\/[\w-]+\.vercel\.app$/.test(normalized)) return callback(null, true);
+        if (/^https:\/\/([a-zA-Z0-9-]+\.)*vercel\.app$/.test(normalized)) return callback(null, true);
         if (/^http:\/\/localhost(:\d+)?$/.test(normalized)) return callback(null, true);
-        callback(new Error(`Origin ${origin} not allowed by CORS`));
+        console.warn(`[CORS] Disallowed origin: ${origin}`);
+        callback(null, false);
     },
     credentials: true,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Mount Clerk middleware BEFORE all routes — populates req.auth on every request
-// CLERK_SECRET_KEY must be set in backend/.env
-app.use(clerkMiddleware());
+// Mount Clerk middleware with graceful fallback
+// Populates req.auth when Clerk keys are present, but avoids crashing public endpoints with 500
+app.use((req, res, next) => {
+    try {
+        clerkMiddleware()(req, res, (err) => {
+            if (err) {
+                console.warn('[CLERK AUTH WARNING]', err.message);
+                return next();
+            }
+            next();
+        });
+    } catch (err) {
+        console.warn('[CLERK MIDDLEWARE WARNING]', err.message);
+        next();
+    }
+});
 
 // Health check — public rate limiter with RFC rate-limit headers
 app.get('/api/health', publicLimiter, async (req, res) => {

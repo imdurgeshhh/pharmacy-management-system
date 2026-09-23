@@ -35,14 +35,14 @@ exports.clerkSync = async (req, res) => {
   try {
     const clerkUserId = clerk_id || req.auth?.userId || null;
 
-    // Check if user already exists by clerk_user_id, email, or username
+    // Check if user already exists by clerk_user_id, email, or username (case-insensitive)
     const existingUser = await pool.query(
       `
         SELECT id, COALESCE(full_name, name) AS name, username, role, email, employee_id, admin_id, auth_provider, clerk_user_id
         FROM employees
         WHERE (clerk_user_id = $1 AND $1 IS NOT NULL)
            OR LOWER(email) = LOWER($2) 
-           OR username = $3
+           OR LOWER(username) = LOWER($3)
         LIMIT 1
       `,
       [clerkUserId, email, username]
@@ -80,15 +80,36 @@ exports.clerkSync = async (req, res) => {
 
     // User does not exist — self-registering Admin via Clerk signup (Requirement 3)
     const displayName = full_name || username;
-    const result = await pool.query(
-      `
-        INSERT INTO employees (name, full_name, email, username, password, role, auth_provider, clerk_user_id, is_active)
-        VALUES ($1, $1, $2, $3, NULL, 'admin', 'clerk', $4, TRUE)
-        RETURNING id, COALESCE(full_name, name) AS name, username, role, email, employee_id, admin_id
-      `,
-      [displayName, email, username, clerkUserId]
-    );
-    const newUser = result.rows[0];
+    let newUser;
+    try {
+      const result = await pool.query(
+        `
+          INSERT INTO employees (name, full_name, email, username, password, role, auth_provider, clerk_user_id, is_active)
+          VALUES ($1, $1, $2, $3, NULL, 'admin', 'clerk', $4, TRUE)
+          RETURNING id, COALESCE(full_name, name) AS name, username, role, email, employee_id, admin_id
+        `,
+        [displayName, email, username, clerkUserId]
+      );
+      newUser = result.rows[0];
+    } catch (insertErr) {
+      // Handle potential race condition / unique constraint collision (code 23505)
+      if (insertErr.code === '23505') {
+        const fallbackQuery = await pool.query(
+          `SELECT id, COALESCE(full_name, name) AS name, username, role, email, employee_id, admin_id
+           FROM employees
+           WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($2)
+           LIMIT 1`,
+          [email, username]
+        );
+        if (fallbackQuery.rows.length > 0) {
+          newUser = fallbackQuery.rows[0];
+        } else {
+          throw insertErr;
+        }
+      } else {
+        throw insertErr;
+      }
+    }
 
     res.status(201).json({
       message: 'Sync successful (new admin created)',
@@ -98,13 +119,13 @@ exports.clerkSync = async (req, res) => {
         email: newUser.email || email,
         username: newUser.username,
         role: newUser.role,
-        employee_id: null,
-        admin_id: null,
+        employee_id: newUser.employee_id || null,
+        admin_id: newUser.admin_id || null,
       }
     });
 
   } catch (error) {
-    console.error('CLERK SYNC ERROR:', error);
-    res.status(500).json({ error: 'Clerk sync failed' });
+    console.error('CLERK SYNC ERROR:', error.message, error.stack);
+    res.status(500).json({ error: 'Clerk sync failed', details: error.message });
   }
 };
