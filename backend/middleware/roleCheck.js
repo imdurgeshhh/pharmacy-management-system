@@ -15,8 +15,9 @@ async function getDbRole(req) {
 
   req.user = user;
   req.role = user.role ? user.role.toLowerCase() : 'guest';
-  req._dbRole = req.role;
-  req.adminId = req.role === 'admin' ? user.id : (user.admin_id ? Number(user.admin_id) : null);
+  req.adminId = req.role === 'admin' 
+    ? (user.admin_id ? Number(user.admin_id) : user.id) 
+    : (user.admin_id ? Number(user.admin_id) : null);
 
   return req.role;
 }
