@@ -106,6 +106,22 @@ export default function POS() {
     } : r));
   };
 
+  const handleMedicineChange = (idx, value) => {
+    const matched = inventory.find(m => m.label.toLowerCase() === value.trim().toLowerCase());
+    if (matched) {
+      setRows(p => p.map((r, i) => i === idx ? {
+        ...r,
+        name: value,
+        mrp: String(matched.mrp || ''),
+        gst_pct: matched.tax_percentage || 12,
+        inventory_id: matched.inventory_id,
+        stock_qty: matched.stock_qty,
+      } : r));
+    } else {
+      updateRow(idx, 'name', value);
+    }
+  };
+
   const confirmRow = (idx) => updateRow(idx, 'editing', false);
   const editRow   = (idx) => updateRow(idx, 'editing', true);
   const deleteRow = (idx) => setRows(p => p.length === 1 ? [blankRow()] : p.filter((_, i) => i !== idx));
@@ -380,7 +396,7 @@ export default function POS() {
                               ariaLabelledBy="th-pos-med"
                               ariaLabel={`Medicine name for row ${idx + 1}`}
                               value={row.name}
-                              onChange={v => updateRow(idx, 'name', v)}
+                              onChange={v => handleMedicineChange(idx, v)}
                               inventory={inventory}
                               onSelect={m => pickMedicine(idx, m)}
                               className={tiCls}
@@ -426,11 +442,13 @@ export default function POS() {
                               type="number"
                               step="0.01"
                               value={row.mrp}
+                              readOnly
+                              tabIndex={-1}
                               aria-labelledby="th-pos-mrp"
                               aria-label={`Maximum Retail Price for row ${idx + 1}`}
-                              onChange={e => updateRow(idx, 'mrp', e.target.value)}
                               placeholder="0.00"
-                              className={`${tiCls} w-20 tabular-nums`}
+                              title="Auto-fetched from stock entry (read-only)"
+                              className={`${tiCls} w-20 tabular-nums bg-gray-100/70 text-gray-700 cursor-not-allowed border-gray-200 select-none font-medium`}
                             />
                           </div>
                         ) : (

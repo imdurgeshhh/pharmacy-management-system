@@ -42,7 +42,14 @@ exports.getInventory = async (req, res) => {
                 m.pack_size,
                 m.admin_id,
                 COALESCE(SUM(i.stock_qty), 0) as total_stock,
-                COALESCE(MAX(i.mrp), 0) as mrp,
+                COALESCE(
+                    (SELECT mrp FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
+                    COALESCE(MAX(i.mrp), 0)
+                ) as mrp,
+                COALESCE(
+                    (SELECT purchase_price FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
+                    COALESCE(MAX(i.purchase_price), 0)
+                ) as purchase_price,
                 COALESCE(MAX(i.tax_percentage), 12) as tax_percentage,
                 MAX(i.id) as inventory_id,
                 MAX(i.batch_number) as batch_number

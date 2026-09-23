@@ -61,13 +61,56 @@ exports.addWholesaleSale = async (req, res) => {
     if (!medicine_name || !quantity || !price_per_unit || !shopkeeper_name) {
         return res.status(400).json({ error: 'medicine_name, quantity, price_per_unit, and shopkeeper_name are required' });
     }
+
+    const qty = Number(quantity);
+    if (!qty || qty <= 0) {
+        return res.status(400).json({ error: 'quantity must be a positive number' });
+    }
+
+    const client = await pool.connect();
     try {
-        const result = await pool.query(
+        await client.query('BEGIN');
+
+        // Find the inventory batch for this medicine (by name, earliest expiry, sufficient stock first)
+        const invCheck = await client.query(
+            `SELECT i.id, i.stock_qty, COALESCE(m.medicine_name, m.name) AS display_name
+             FROM INVENTORY i
+             JOIN MEDICINES m ON i.medicine_id = m.id
+             WHERE (LOWER(COALESCE(m.medicine_name, m.name)) = LOWER($1))
+               AND i.admin_id = $2
+             ORDER BY (i.stock_qty >= $3) DESC, i.expiry_date ASC, i.id ASC
+             LIMIT 1`,
+            [medicine_name.trim(), adminId, qty]
+        );
+
+        if (invCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                error: `No inventory stock found for "${medicine_name}". Please add stock via Purchases first.`
+            });
+        }
+
+        const invRecord = invCheck.rows[0];
+        if (invRecord.stock_qty < qty) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                error: `Insufficient stock for "${invRecord.display_name}". Available: ${invRecord.stock_qty}, Requested: ${qty}.`
+            });
+        }
+
+        // Deduct stock
+        await client.query(
+            'UPDATE INVENTORY SET stock_qty = stock_qty - $1 WHERE id = $2 AND admin_id = $3',
+            [qty, invRecord.id, adminId]
+        );
+
+        // Insert wholesale sale record
+        const result = await client.query(
             `INSERT INTO WHOLESALE_SALES (medicine_name, quantity, price_per_unit, gst_number, shopkeeper_name, sale_date, admin_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
             [
                 medicine_name,
-                Number(quantity),
+                qty,
                 Number(price_per_unit),
                 gst_number || null,
                 shopkeeper_name,
@@ -75,26 +118,71 @@ exports.addWholesaleSale = async (req, res) => {
                 adminId
             ]
         );
+
+        await client.query('COMMIT');
         res.status(201).json(result.rows[0]);
     } catch (error) {
+        await client.query('ROLLBACK');
         console.error(error);
         res.status(500).json({ error: 'Failed to add wholesale sale' });
+    } finally {
+        client.release();
     }
 };
 
 exports.deleteWholesaleSale = async (req, res) => {
     const { id } = req.params;
     const adminId = req.adminId;
+    const client = await pool.connect();
     try {
-        const result = await pool.query(
-            'DELETE FROM WHOLESALE_SALES WHERE id = $1 AND admin_id = $2 RETURNING *',
+        await client.query('BEGIN');
+
+        // Fetch the sale record first so we can revert the stock
+        const saleCheck = await client.query(
+            'SELECT * FROM WHOLESALE_SALES WHERE id = $1 AND admin_id = $2',
             [id, adminId]
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Record not found' });
+        if (saleCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Record not found' });
+        }
+
+        const sale = saleCheck.rows[0];
+
+        // Delete the sale record
+        await client.query(
+            'DELETE FROM WHOLESALE_SALES WHERE id = $1 AND admin_id = $2',
+            [id, adminId]
+        );
+
+        // Restore stock to inventory (match by medicine name, pick earliest expiry batch)
+        // If the medicine no longer exists in inventory, we skip revert — sale is still deleted.
+        const invCheck = await client.query(
+            `SELECT i.id
+             FROM INVENTORY i
+             JOIN MEDICINES m ON i.medicine_id = m.id
+             WHERE (LOWER(COALESCE(m.medicine_name, m.name)) = LOWER($1))
+               AND i.admin_id = $2
+             ORDER BY i.expiry_date ASC, i.id ASC
+             LIMIT 1`,
+            [sale.medicine_name, adminId]
+        );
+
+        if (invCheck.rows.length > 0) {
+            await client.query(
+                'UPDATE INVENTORY SET stock_qty = stock_qty + $1 WHERE id = $2 AND admin_id = $3',
+                [sale.quantity, invCheck.rows[0].id, adminId]
+            );
+        }
+
+        await client.query('COMMIT');
         res.json({ message: 'Deleted successfully' });
     } catch (error) {
+        await client.query('ROLLBACK');
         console.error(error);
         res.status(500).json({ error: 'Failed to delete wholesale sale' });
+    } finally {
+        client.release();
     }
 };
 

@@ -241,6 +241,7 @@ export default function Purchases() {
           // Live DB uses `name`; inventoryController join may alias it differently
           label: m.name || m.medicine_name || m.label || '',
           mrp: parseFloat(m.mrp) || 0,
+          purchase_price: parseFloat(m.purchase_price) || 0,
           schedule: (m.schedule || 'NONE').toUpperCase(),
         })).filter(m => m.label));
       })
@@ -295,7 +296,7 @@ export default function Purchases() {
       medicine_id: m.id,
       schedule: m.schedule || 'NONE',
       is_new: false,
-      price: m.mrp ? String(m.mrp) : p.price
+      price: m.purchase_price ? String(m.purchase_price) : (m.mrp ? String(m.mrp) : p.price)
     }));
     setFormValidationMsg('');
   };
@@ -310,7 +311,7 @@ export default function Purchases() {
         medicine_id: match.id,
         schedule: match.schedule || 'NONE',
         is_new: false,
-        price: p.price || (match.mrp ? String(match.mrp) : p.price)
+        price: p.price || (match.purchase_price ? String(match.purchase_price) : (match.mrp ? String(match.mrp) : p.price))
       }));
     } else {
       setForm(p => ({

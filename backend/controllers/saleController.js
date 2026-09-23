@@ -225,20 +225,40 @@ exports.createSale = async (req, res) => {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ error: 'Customer not found in this pharmacy' });
             }
-        } else if (!customerId && customer_name && customer_name.trim() !== 'Walk-in Customer') {
+        } else if (!customerId && customer_phone && customer_phone.trim()) {
+            const trimmedPhone = customer_phone.trim();
+            const trimmedName = (customer_name && customer_name.trim()) ? customer_name.trim() : 'Walk-in Customer';
+
+            // Check if customer with this phone number already exists
             const checkCust = await client.query(
-                'SELECT id FROM CUSTOMERS WHERE name = $1 AND phone = $2 AND admin_id = $3',
-                [customer_name, customer_phone, adminId]
+                'SELECT id, name FROM CUSTOMERS WHERE phone = $1 AND admin_id = $2',
+                [trimmedPhone, adminId]
             );
+
             if (checkCust.rows.length > 0) {
                 customerId = checkCust.rows[0].id;
-            } else if (customer_phone) {
+                if (trimmedName !== 'Walk-in Customer' && checkCust.rows[0].name !== trimmedName) {
+                    await client.query(
+                        'UPDATE CUSTOMERS SET name = $1 WHERE id = $2 AND admin_id = $3',
+                        [trimmedName, customerId, adminId]
+                    );
+                }
+            } else {
                 const newCust = await client.query(
-                    'INSERT INTO CUSTOMERS (name, phone, admin_id) VALUES ($1, $2, $3) RETURNING id',
-                    [customer_name, customer_phone, adminId]
+                    `INSERT INTO CUSTOMERS (name, phone, admin_id)
+                     VALUES ($1, $2, $3)
+                     ON CONFLICT (phone) DO UPDATE SET name = COALESCE(NULLIF(EXCLUDED.name, 'Walk-in Customer'), CUSTOMERS.name)
+                     RETURNING id`,
+                    [trimmedName, trimmedPhone, adminId]
                 );
                 customerId = newCust.rows[0].id;
             }
+        } else if (!customerId && customer_name && customer_name.trim() && customer_name.trim() !== 'Walk-in Customer') {
+            const newCust = await client.query(
+                'INSERT INTO CUSTOMERS (name, admin_id) VALUES ($1, $2) RETURNING id',
+                [customer_name.trim(), adminId]
+            );
+            customerId = newCust.rows[0].id;
         }
 
         const safeEmployeeId = req.user?.id || (employee_id && !isNaN(employee_id) ? parseInt(employee_id, 10) : null);

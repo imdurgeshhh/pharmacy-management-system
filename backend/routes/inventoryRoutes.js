@@ -27,8 +27,6 @@ const validateSchedule = (req, res, next) => {
 router.use(authenticateToken, requireBusinessAccess);
 
 router.get('/', inventoryController.getInventory);
-router.post('/', validateSchedule, medicineSchema, inventoryController.addMedicine);
-router.post('/medicine', validateSchedule, medicineSchema, inventoryController.addMedicine);
 router.get('/alerts', inventoryController.getAlerts);
 router.get('/medicine/:id/batches', validate([positiveIntId('id')]), inventoryController.getMedicineBatches);
 router.get('/medicine/:id', validate([positiveIntId('id')]), inventoryController.getMedicineById);

@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import WholesaleSaleModal from '../WholesaleSaleModal';
+import api from '../../../config/axios';
 
 describe('components/suppliers/WholesaleSaleModal.jsx', () => {
   it('renders modal form fields when isOpen is true', () => {
@@ -117,5 +118,40 @@ describe('components/suppliers/WholesaleSaleModal.jsx', () => {
 
     expect(handleSaveSale).not.toHaveBeenCalled();
     expect(screen.getByText(/Please enter a valid 15-character Indian GST number/i)).toBeInTheDocument();
+  });
+
+  it('auto-fetches price per unit when a medicine is selected from inventory suggestions', async () => {
+    vi.spyOn(api, 'get').mockResolvedValueOnce({
+      data: [
+        { id: 1, name: 'Paracetamol 500mg', mrp: 28.5, total_stock: 50 }
+      ]
+    });
+
+    render(
+      <WholesaleSaleModal
+        isOpen={true}
+        onClose={vi.fn()}
+        onSaveSale={vi.fn()}
+        loading={false}
+      />
+    );
+
+    const medInput = screen.getByLabelText(/Medicine Name/i);
+    fireEvent.change(medInput, { target: { name: 'medicine_name', value: 'Para' } });
+    fireEvent.focus(medInput);
+
+    await waitFor(() => {
+      expect(screen.getByRole('listbox')).toBeInTheDocument();
+    });
+
+    const opt = screen.getByRole('option');
+    expect(opt).toHaveTextContent('Paracetamol 500mg');
+    expect(opt).toHaveTextContent('₹28.50');
+
+    fireEvent.mouseDown(opt);
+
+    const priceInput = screen.getByLabelText(/Price Per Unit/i);
+    expect(priceInput).toHaveValue(28.5);
+    expect(screen.getByText(/Auto-fetched from stock entry/i)).toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../config/axios';
 import RoleGuard from '../components/RoleGuard';
-import { Plus, Edit2, Trash2, Package, X, Save, Search, RotateCcw } from 'lucide-react';
+import { Edit2, Trash2, Package, X, Save, Search, RotateCcw } from 'lucide-react';
 import Modal from '../components/common/Modal';
 import FormField from '../components/common/FormField';
 import ConfirmModal from '../components/common/ConfirmModal';
@@ -121,12 +121,6 @@ const Inventory = () => {
         }
     };
 
-    const handleAddNew = () => {
-        setEditingItem(null);
-        setFormData(DEFAULT_FORM_DATA);
-        setErrorMsg(null);
-        setShowModal(true);
-    };
 
     const handleEdit = (item) => {
         setEditingItem(item);
@@ -181,21 +175,13 @@ const Inventory = () => {
 
     return (
         <div className="space-y-6 animate-fade-in relative z-10 lg:pl-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                    <h1 className="h2-fluid tracking-tight text-[rgb(var(--text-heading))] flex items-center gap-3">
-                        <Package className="text-[rgb(var(--color-primary))] opacity-80" size={32} aria-hidden="true" /> Central Inventory
-                    </h1>
-                    <p className="text-sm font-medium text-[rgb(var(--text-body))] mt-1">
-                        Manage your complete catalog, track drug schedule classifications, codes, and stock levels.
-                    </p>
-                </div>
-                <button
-                    onClick={handleAddNew}
-                    className="btn-primary shadow-[rgb(var(--color-primary))]/30 flex items-center gap-2 min-h-[44px]"
-                >
-                    <Plus size={20} strokeWidth={3} aria-hidden="true" /> Add Medicine
-                </button>
+            <div>
+                <h1 className="h2-fluid tracking-tight text-[rgb(var(--text-heading))] flex items-center gap-3">
+                    <Package className="text-[rgb(var(--color-primary))] opacity-80" size={32} aria-hidden="true" /> Central Inventory
+                </h1>
+                <p className="text-sm font-medium text-[rgb(var(--text-body))] mt-1">
+                    Read-only view of current stock levels. To add new stock, use the <strong>Purchases</strong> section.
+                </p>
             </div>
 
             {/* Search & Filter Toolbar */}
@@ -391,7 +377,7 @@ const Inventory = () => {
             <Modal
                 isOpen={showModal}
                 onClose={() => { setShowModal(false); setErrorMsg(null); }}
-                title={editingItem ? 'Edit Medicine Details' : 'Add New Medicine'}
+                title="Edit Medicine Details"
                 maxWidth="max-w-lg"
             >
                 <form onSubmit={(e) => { e.preventDefault(); handleSave(); }} className="space-y-4">
@@ -499,7 +485,7 @@ const Inventory = () => {
                     <div className="flex gap-3 pt-3">
                         <button type="button" onClick={() => setShowModal(false)} className="flex-1 btn-secondary min-h-[44px]">Cancel</button>
                         <button type="submit" className="flex-1 btn-primary flex items-center justify-center gap-2 min-h-[44px]">
-                            <Save size={18} aria-hidden="true" /> {editingItem ? 'Save Changes' : 'Add Medicine'}
+                            <Save size={18} aria-hidden="true" /> Save Changes
                         </button>
                     </div>
                 </form>
