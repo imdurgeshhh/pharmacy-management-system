@@ -57,7 +57,12 @@ app.use((req, res, next) => {
 app.get('/api/health', publicLimiter, async (req, res) => {
     try {
         const result = await pool.query('SELECT NOW()');
-        res.json({ status: 'OK', timestamp: result.rows[0].now, message: 'Server is running and DB is connected' });
+        res.json({ 
+            status: 'OK', 
+            timestamp: result.rows[0].now, 
+            version: '1.0.3',
+            message: 'Server is running and DB is connected' 
+        });
     } catch (error) {
         console.error('Health check error:', error.message);
         res.status(500).json({ status: 'ERROR', message: 'Database connection failed' });

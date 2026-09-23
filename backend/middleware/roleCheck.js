@@ -55,15 +55,20 @@ const requireRole = (...allowedRoles) => {
  * An unassigned shopkeeper (admin_id is null) is blocked from all business data.
  */
 const requireBusinessAccess = async (req, res, next) => {
-  if (!req.user) {
-    await getDbRole(req);
-  }
+  try {
+    if (!req.user) {
+      await getDbRole(req);
+    }
 
-  if (!req.adminId) {
-    return res.status(403).json({ error: 'Forbidden: Unassigned shopkeeper has no business access' });
-  }
+    if (!req.adminId) {
+      return res.status(403).json({ error: 'Forbidden: Unassigned shopkeeper has no business access' });
+    }
 
-  next();
+    next();
+  } catch (err) {
+    console.error('requireBusinessAccess error:', err.message);
+    return res.status(403).json({ error: 'Forbidden: Business access check failed' });
+  }
 };
 
 module.exports = {

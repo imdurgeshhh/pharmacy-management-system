@@ -39,21 +39,43 @@ exports.getSupplierById = async (req, res) => {
 };
 
 exports.addSupplier = async (req, res) => {
-    const adminId = req.adminId;
-    const { name, contact_person, phone, email, address } = req.body;
+    const adminId = req.adminId ? Number(req.adminId) : null;
+    const name = req.body.name ? req.body.name.trim() : null;
+    const contact_person = req.body.contact_person ? req.body.contact_person.trim() : null;
+    const phone = (req.body.phone || req.body.contact_number) ? (req.body.phone || req.body.contact_number).trim() : null;
+    const email = req.body.email ? req.body.email.trim() : null;
+    const address = req.body.address ? req.body.address.trim() : null;
+
+    if (!name) {
+        return res.status(400).json({ error: 'Supplier name is required' });
+    }
+    if (!phone) {
+        return res.status(400).json({ error: 'Contact number is required' });
+    }
+
     try {
         const result = await pool.query(
             'INSERT INTO SUPPLIERS (name, contact_person, phone, email, address, admin_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [name, contact_person || null, phone, email || null, address || null, adminId]
+            [name, contact_person, phone, email, address, adminId]
         );
         res.status(201).json(result.rows[0]);
     } catch (error) {
-        console.error('addSupplier error:', error.message);
+        console.error('addSupplier error:', {
+            code: error.code,
+            message: error.message,
+            detail: error.detail,
+            adminId,
+            name,
+            phone
+        });
         if (error.code === '23505') {
             return res.status(400).json({ error: 'A supplier with this phone number already exists' });
         }
         if (error.code === '23503') {
             return res.status(400).json({ error: 'Invalid business tenant reference' });
+        }
+        if (error.code === '23502') {
+            return res.status(400).json({ error: `Missing required field: ${error.column || 'name or phone'}` });
         }
         if (error.code === '22001') {
             return res.status(400).json({ error: 'One or more fields exceed maximum character length' });
@@ -64,21 +86,45 @@ exports.addSupplier = async (req, res) => {
 
 exports.updateSupplier = async (req, res) => {
     const { id } = req.params;
-    const adminId = req.adminId;
-    const { name, contact_person, phone, email, address } = req.body;
+    const adminId = req.adminId ? Number(req.adminId) : null;
+    const name = req.body.name ? req.body.name.trim() : null;
+    const contact_person = req.body.contact_person ? req.body.contact_person.trim() : null;
+    const phone = (req.body.phone || req.body.contact_number) ? (req.body.phone || req.body.contact_number).trim() : null;
+    const email = req.body.email ? req.body.email.trim() : null;
+    const address = req.body.address ? req.body.address.trim() : null;
+
+    if (!name) {
+        return res.status(400).json({ error: 'Supplier name is required' });
+    }
+    if (!phone) {
+        return res.status(400).json({ error: 'Contact number is required' });
+    }
+
     try {
         const result = await pool.query(
             'UPDATE SUPPLIERS SET name = $1, contact_person = $2, phone = $3, email = $4, address = $5 WHERE id = $6 AND admin_id = $7 RETURNING *',
-            [name, contact_person || null, phone, email || null, address || null, id, adminId]
+            [name, contact_person, phone, email, address, id, adminId]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
         res.json(result.rows[0]);
     } catch (error) {
-        console.error('updateSupplier error:', error.message);
+        console.error('updateSupplier error:', {
+            code: error.code,
+            message: error.message,
+            detail: error.detail,
+            id,
+            adminId
+        });
         if (error.code === '23505') {
             return res.status(400).json({ error: 'A supplier with this phone number already exists' });
+        }
+        if (error.code === '23503') {
+            return res.status(400).json({ error: 'Invalid business tenant reference' });
+        }
+        if (error.code === '23502') {
+            return res.status(400).json({ error: `Missing required field: ${error.column || 'name or phone'}` });
         }
         if (error.code === '22001') {
             return res.status(400).json({ error: 'One or more fields exceed maximum character length' });

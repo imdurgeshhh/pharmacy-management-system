@@ -95,35 +95,40 @@ async function loadDbUser(req) {
 }
 
 const authenticateToken = async (req, res, next) => {
-  const auth = getAuth(req);
+  try {
+    const auth = getAuth(req);
 
-  if (!auth || !auth.userId) {
-    return res.status(401).json({ error: 'Unauthorized: Authentication required' });
+    if (!auth || !auth.userId) {
+      return res.status(401).json({ error: 'Unauthorized: Authentication required' });
+    }
+
+    req.auth = auth;
+
+    const user = await loadDbUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized: User profile not found' });
+    }
+
+    if (user.is_active === false) {
+      return res.status(403).json({ error: 'Forbidden: Account is deactivated' });
+    }
+
+    req.user = user;
+    req.role = user.role ? user.role.toLowerCase() : 'guest';
+    req._dbRole = req.role;
+
+    // Derive tenant ownership: Admin owns their own id unless explicitly assigned to another admin tenant; Shopkeeper/Employee belongs to admin_id
+    if (req.role === 'admin') {
+      req.adminId = user.admin_id ? Number(user.admin_id) : user.id;
+    } else {
+      req.adminId = user.admin_id ? Number(user.admin_id) : null;
+    }
+
+    next();
+  } catch (err) {
+    console.error('authenticateToken error:', err.message);
+    return res.status(401).json({ error: 'Unauthorized: Authentication failed' });
   }
-
-  req.auth = auth;
-
-  const user = await loadDbUser(req);
-  if (!user) {
-    return res.status(401).json({ error: 'Unauthorized: User profile not found' });
-  }
-
-  if (user.is_active === false) {
-    return res.status(403).json({ error: 'Forbidden: Account is deactivated' });
-  }
-
-  req.user = user;
-  req.role = user.role ? user.role.toLowerCase() : 'guest';
-  req._dbRole = req.role;
-
-  // Derive tenant ownership: Admin owns their own id unless explicitly assigned to another admin tenant; Shopkeeper/Employee belongs to admin_id
-  if (req.role === 'admin') {
-    req.adminId = user.admin_id ? Number(user.admin_id) : user.id;
-  } else {
-    req.adminId = user.admin_id ? Number(user.admin_id) : null;
-  }
-
-  next();
 };
 
 module.exports = { authenticateToken, loadDbUser };
