@@ -101,24 +101,24 @@ describe('utils/receiptPrinter.js', () => {
       'Amoxicillin 500mg',
       '3004',
       2,
-      '₹50.00',
+      'Rs. 50.00',
       '10%',
-      '₹10.00',
+      'Rs. 10.00',
       '12%',
-      '₹12.00',
-      '₹102.00',
+      'Rs. 12.00',
+      'Rs. 102.00',
     ]);
     expect(tableOptions.body[1]).toEqual([
       2,
       'Paracetamol 650mg',
       '3004',
       10,
-      '₹30.00',
+      'Rs. 30.00',
       '0%',
-      '₹0.00',
+      'Rs. 0.00',
       '5%',
-      '₹15.00',
-      '₹315.00',
+      'Rs. 15.00',
+      'Rs. 315.00',
     ]);
   });
 
@@ -132,7 +132,7 @@ describe('utils/receiptPrinter.js', () => {
     expect(texts).toContain('Phone: —');
     expect(texts).toContain('Payment: UPI');
     expect(texts).toContain('Bill No: 10043');
-    expect(texts).toContain('Grand Total: ₹0.00');
+    expect(texts).toContain('Grand Total: Rs. 0.00');
   });
 
   it('renders optional doctor and prescription fields when provided', () => {
@@ -187,10 +187,10 @@ describe('utils/receiptPrinter.js', () => {
 
     const tableOptions = autoTable.mock.calls[0][1];
     expect(tableOptions.body[0][3]).toBe(5000);
-    expect(tableOptions.body[0][4]).toBe('₹125.75');
+    expect(tableOptions.body[0][4]).toBe('Rs. 125.75');
 
     const texts = recordedTexts.map(t => t.str);
-    expect(texts).toContain('Grand Total: ₹647612.50');
+    expect(texts).toContain('Grand Total: Rs. 647612.50');
   });
 
   it('renders CGST and SGST split, Amount in Words, and Pharmacist signatory for same-state transaction', () => {
@@ -223,7 +223,7 @@ describe('utils/receiptPrinter.js', () => {
     const texts = recordedTexts.map(t => t.str);
     expect(texts).toContain('CGST:');
     expect(texts).toContain('SGST:');
-    expect(texts).toContain('₹50.00'); // 100.0 / 2
+    expect(texts).toContain('Rs. 50.00'); // 100.0 / 2
     expect(texts).toContain('D.L. No.: DL-WB-2025-888');
     expect(texts).toContain('Amount in Words:');
     expect(texts).toContain('One Thousand Rupees Only');
@@ -255,7 +255,7 @@ describe('utils/receiptPrinter.js', () => {
 
     const texts = recordedTexts.map(t => t.str);
     expect(texts).toContain('IGST:');
-    expect(texts).toContain('₹60.00');
+    expect(texts).toContain('Rs. 60.00');
     expect(texts).not.toContain('CGST:');
     expect(texts).not.toContain('SGST:');
   });

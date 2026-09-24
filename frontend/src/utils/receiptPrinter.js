@@ -3,14 +3,23 @@ import autoTable from 'jspdf-autotable';
 import { getShopProfile } from '../config/shop';
 import { numberToWords } from './numberToWords';
 
-const fmt = (n) => `₹${(Number(n) || 0).toFixed(2)}`;
+const fmt = (n) => `Rs. ${(Number(n) || 0).toFixed(2)}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 /**
- * Generates and downloads a branded PDF invoice for POS retail checkout.
+ * Generates and downloads a PDF invoice for POS retail checkout.
  * Auto-fetches store details from the DB / shop profile.
+ * Fixes ₹ symbol bug by using standard 'Rs.' (compatible with standard PDF Helvetica).
+ * Opens preview in new tab to prevent ERR_FAILED local file issues, and triggers save.
  */
-export function generateInvoicePDF(customer = {}, rows = [], summary = {}, paymentMode = 'Cash', bNo = '', shop = getShopProfile()) {
+export function generateInvoicePDF(
+  customer = {},
+  rows = [],
+  summary = {},
+  paymentMode = 'Cash',
+  bNo = '',
+  shop = getShopProfile()
+) {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const W = doc.internal.pageSize.width;
   const H = doc.internal.pageSize.height;
@@ -37,11 +46,16 @@ export function generateInvoicePDF(customer = {}, rows = [], summary = {}, payme
   doc.setFont('helvetica', 'normal');
   doc.text(shopAddress, W / 2, 34, { align: 'center' });
 
-  let contactLine = `GSTIN: ${shopGstin || '—'}  |  Ph: ${shopPhone || '—'}`;
-  if (shopEmail) {
-    contactLine += `  |  Email: ${shopEmail}`;
+  // Only display GSTIN / Phone if non-empty; avoid ugly 'GSTIN: —' when real data exists
+  const contactParts = [];
+  if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
+  if (shopPhone) contactParts.push(`Ph: ${shopPhone}`);
+  if (shopEmail) contactParts.push(`Email: ${shopEmail}`);
+  const contactLine = contactParts.length > 0 ? contactParts.join('  |  ') : (shopDlNo ? '' : 'TAX INVOICE');
+
+  if (contactLine) {
+    doc.text(contactLine, W / 2, 45, { align: 'center' });
   }
-  doc.text(contactLine, W / 2, 45, { align: 'center' });
 
   if (shopDlNo) {
     doc.text(`D.L. No.: ${shopDlNo}`, W / 2, 56, { align: 'center' });
@@ -102,7 +116,7 @@ export function generateInvoicePDF(customer = {}, rows = [], summary = {}, payme
     head: [['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt']],
     body: rows.map((r, i) => [
       i + 1,
-      r.name,
+      r.name || r.particulars || r.medicine_name || 'Medicine',
       r.hsn_code || r.hsn || '3004',
       r.qty,
       fmt(r.mrp),
@@ -199,7 +213,16 @@ export function generateInvoicePDF(customer = {}, rows = [], summary = {}, payme
   doc.text('Terms: Medicines without valid prescription will not be accepted back. Keep medicines out of reach of children.', W / 2, footerBottom - 10, { align: 'center' });
   doc.text('Thank you! Get well soon! Computer-generated invoice.', W / 2, footerBottom, { align: 'center' });
 
-  doc.save(`Invoice_${bNo}.pdf`);
+  // Open in browser tab via Blob URL to avoid Chrome file:/// ERR_FAILED, and trigger file download
+  if (typeof doc.output === 'function' && typeof window !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    try {
+      const blob = doc.output('blob');
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+    } catch (_) {}
+  }
+
+  doc.save(`Invoice_${bNo || 'bill'}.pdf`);
 }
 
 export default generateInvoicePDF;

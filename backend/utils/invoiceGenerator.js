@@ -25,38 +25,40 @@ function generateInvoice(data, res) {
   }
 
   const store = data.store || {};
-  const shopName = (store.shop_name || '').toUpperCase();
+  const shopName = (store.shop_name || store.name || 'PHARMACY STORE').toUpperCase();
   const shopAddress = (store.address || '').toUpperCase();
-  const dlNo = store.dl_no || '';
+  const dlNo = store.dl_no || store.drug_licence_no || '';
   const panNo = store.pan_no || '';
   const aadharNo = store.aadhar_no || '';
   const foodLicNo = store.food_lic_no || '';
+  const shopPhone = store.phone || '';
+  const shopGstin = store.gstin || '';
 
   // Invoice metadata
   const docTitle = (data.title || 'ESTIMATE ORDER').toUpperCase();
   const subTitle = (data.subTitle || 'ROUGH ESTIMATE').toUpperCase();
-  const paymentMode = (data.paymentMode || 'CREDIT').toUpperCase();
+  const paymentMode = (data.paymentMode || data.payment_mode || 'CREDIT').toUpperCase();
   const dateStr = data.date || new Date().toLocaleDateString('en-GB'); // DD/MM/YYYY
   const timeStr = data.time || new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
   const eInvoice = data.eInvoice || '';
-  const cashier = data.cashier || data.userName || '';
-  const oldBalance = parseFloat(data.oldBalance || data.credit_balance || 0).toFixed(2);
+  const cashier = data.cashier || data.userName || data.employeeName || data.employee_name || 'Admin';
+  const oldBalance = parseFloat(data.oldBalance || data.credit_balance || data.summary?.balance || 0).toFixed(2);
 
   // Items processing
   const items = Array.isArray(data.items) ? data.items : [];
   let totalUnits = 0;
   let subTotalCalc = 0;
-  let totalScheme = parseFloat(data.scheme_amount || 0);
-  let totalDiscount = parseFloat(data.discount_amount || 0);
+  let totalScheme = parseFloat(data.scheme_amount || data.summary?.schemeAmount || 0);
+  let totalDiscount = parseFloat(data.discount_amount || data.summary?.discountAmount || 0);
 
   const formattedItems = items.map((it) => {
     const qty = parseFloat(it.qty) || 0;
     const freeQty = parseFloat(it.free_qty || it.freeQty || 0);
     const mrp = parseFloat(it.mrp || it.price || 0);
     const oldMrp = parseFloat(it.old_mrp || it.oldMrp || 0);
-    const trRate = parseFloat(it.trade_rate || it.tradeRate || it.price || mrp);
-    const schPct = parseFloat(it.scheme_pct || it.sch_pct || 0);
-    const discPct = parseFloat(it.discount_pct || it.disc_pct || 0);
+    const trRate = parseFloat(it.trade_rate || it.tradeRate || it.trRate || it.price || mrp);
+    const schPct = parseFloat(it.scheme_pct || it.schemePct || it.schPct || it.sch_pct || 0);
+    const discPct = parseFloat(it.discount_pct || it.discountPct || it.discPct || it.disc_pct || 0);
 
     // Net rate calculation
     let netRate = parseFloat(it.net_rate || it.netRate || 0);
@@ -66,7 +68,7 @@ function generateInvoice(data, res) {
     }
 
     // Net total
-    let netTotal = parseFloat(it.net_total || it.netTotal || 0);
+    let netTotal = parseFloat(it.net_total || it.netTotal || it.total || 0);
     if (!netTotal) {
       netTotal = +(netRate * qty).toFixed(2);
     }
@@ -75,7 +77,7 @@ function generateInvoice(data, res) {
     subTotalCalc += netTotal;
 
     // Expiry formatting: expect MM/YY or YYYY-MM-DD
-    let expFormatted = it.expiry || it.exp || '';
+    let expFormatted = it.exp || it.expDate || it.expiry || it.expiry_date || '';
     if (expFormatted.includes('-') && expFormatted.length >= 7) {
       const parts = expFormatted.split('-');
       if (parts[0].length === 4) {
@@ -85,12 +87,16 @@ function generateInvoice(data, res) {
       }
     }
 
+    const medName = (it.particulars || it.medicineName || it.name || it.medicine_name || 'Medicine').toUpperCase();
+    const packVal = (it.pack || it.pack_size || it.packSize || '1').toUpperCase();
+    const batchVal = (it.batch || it.batch_number || it.batchNo || 'N/A').toUpperCase();
+
     return {
       oldMrp: oldMrp ? oldMrp.toFixed(2) : '0.00',
-      hsn: it.hsn_code || it.hsn || '3004',
-      particulars: (it.name || it.medicine_name || 'Medicine').toUpperCase(),
-      pack: (it.pack || it.pack_size || '1').toUpperCase(),
-      batch: (it.batch || it.batch_number || 'N/A').toUpperCase(),
+      hsn: it.hsn_code || it.hsnCode || it.hsn || '3004',
+      particulars: medName,
+      pack: packVal,
+      batch: batchVal,
       exp: expFormatted || 'N/A',
       mrp: mrp.toFixed(2),
       qtyFr: freeQty > 0 ? `${qty}+${freeQty}` : `${qty}`,
@@ -102,11 +108,11 @@ function generateInvoice(data, res) {
     };
   });
 
-  const subTotal = parseFloat(data.subTotal || data.sub_total || subTotalCalc);
-  const crDr = parseFloat(data.cr_dr_amount || 0);
-  const freight = parseFloat(data.freight_amount || 0);
-  const roundOff = parseFloat(data.round_off || 0);
-  const grandTotal = parseFloat(data.grandTotal || data.total_amount || (subTotal - totalScheme - totalDiscount + crDr + freight + roundOff));
+  const subTotal = parseFloat(data.subTotal || data.sub_total || data.summary?.subTotal || subTotalCalc);
+  const crDr = parseFloat(data.cr_dr_amount || data.summary?.crDrAmount || 0);
+  const freight = parseFloat(data.freight_amount || data.summary?.freightAmount || 0);
+  const roundOff = parseFloat(data.round_off || data.summary?.roundOff || 0);
+  const grandTotal = parseFloat(data.grandTotal || data.total_amount || data.summary?.grandTotal || (subTotal - totalScheme - totalDiscount + crDr + freight + roundOff));
   const wordsStr = numberToWords(grandTotal);
 
   // ── Coordinates & Geometry ───────────────────────────────────────────────
@@ -155,7 +161,7 @@ function generateInvoice(data, res) {
   const tableBottomY = tableBodyY + contentTableH;
   const summaryH = 70;
   const summaryBottomY = tableBottomY + summaryH;
-  const footerH = 24;
+  const footerH = 30;
   const footerBottomY = summaryBottomY + footerH;
 
   // Draw Outer Border
@@ -171,8 +177,13 @@ function generateInvoice(data, res) {
   doc.text(docTitle, leftX + 8, headerY + 12);
   
   if (data.customerName && data.customerName !== 'Walk-in Customer') {
-    doc.font('Helvetica').fontSize(8).fillColor('#333333');
-    doc.text(`Customer: ${data.customerName} (${data.customerPhone || '—'})`, leftX + 8, headerY + 36);
+    doc.font('Helvetica').fontSize(7.5).fillColor('#333333');
+    const custPhone = data.customerPhone ? ` (${data.customerPhone})` : '';
+    doc.text(`Customer: ${data.customerName}${custPhone}`, leftX + 8, headerY + 32);
+    if (data.doctorName || data.rxNo) {
+      const docRx = [data.doctorName ? `Dr: ${data.doctorName}` : '', data.rxNo ? `Rx: ${data.rxNo}` : ''].filter(Boolean).join('  |  ');
+      doc.fontSize(7).text(docRx, leftX + 8, headerY + 43);
+    }
   }
 
   // Vertical line separating header left & right
@@ -184,11 +195,28 @@ function generateInvoice(data, res) {
   doc.text(`M/s: ${shopName}`, headerSplitX + 6, headerY + 6, { width: rightX - headerSplitX - 10 });
 
   doc.font('Helvetica').fontSize(7.5);
-  doc.text(shopAddress, headerSplitX + 6, headerY + 18);
+  if (shopAddress) {
+    doc.text(shopAddress, headerSplitX + 6, headerY + 18, { width: rightX - headerSplitX - 10 });
+  }
 
-  doc.fontSize(7);
-  doc.text(`DL.NO. ${dlNo}`, headerSplitX + 6, headerY + 30);
-  doc.text(`PAN : ${panNo}, AADHAR : ${aadharNo}`, headerSplitX + 6, headerY + 42);
+  const idLine1Parts = [];
+  if (dlNo) idLine1Parts.push(`DL.NO. ${dlNo}`);
+  if (shopPhone) idLine1Parts.push(`Ph: ${shopPhone}`);
+  const idLine1 = idLine1Parts.join('  |  ');
+  if (idLine1) {
+    doc.fontSize(7);
+    doc.text(idLine1, headerSplitX + 6, headerY + 30);
+  }
+
+  const idLine2Parts = [];
+  if (shopGstin) idLine2Parts.push(`GSTIN: ${shopGstin}`);
+  if (panNo) idLine2Parts.push(`PAN: ${panNo}`);
+  if (aadharNo) idLine2Parts.push(`AADHAR: ${aadharNo}`);
+  const idLine2 = idLine2Parts.join('  |  ');
+  if (idLine2) {
+    doc.fontSize(7);
+    doc.text(idLine2, headerSplitX + 6, headerY + 41);
+  }
 
   // ── 2. META ROW SECTION ──────────────────────────────────────────────────
   // Horizontal divider at bottom of meta
@@ -203,7 +231,13 @@ function generateInvoice(data, res) {
 
   // Left: Food Lic NO
   doc.font('Helvetica-Bold').fontSize(8).fillColor('#000000');
-  doc.text(`Food Lic NO : ${foodLicNo}`, leftX + 6, metaY + 10);
+  if (foodLicNo) {
+    doc.text(`Food Lic NO : ${foodLicNo}`, leftX + 6, metaY + 10);
+  } else if (shopGstin && !idLine2Parts.some(p => p.startsWith('GSTIN:'))) {
+    doc.text(`GSTIN : ${shopGstin}`, leftX + 6, metaY + 10);
+  } else {
+    doc.text('ESTIMATE / BILL', leftX + 6, metaY + 10);
+  }
 
   // Center: ROUGH ESTIMATE / CREDIT
   doc.font('Helvetica-Bold').fontSize(8.5);
@@ -311,13 +345,16 @@ function generateInvoice(data, res) {
   doc.moveTo(leftX, summaryBottomY).lineTo(rightX, summaryBottomY).stroke();
 
   // Amount in words (Bottom Left)
-  doc.font('Helvetica').fontSize(7.5).fillColor('#000000');
-  doc.text(wordsStr, leftX + 8, summaryBottomY + 6, { width: 280, ellipsis: true });
+  doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#000000');
+  doc.text(wordsStr, leftX + 8, summaryBottomY + 4, { width: 300, ellipsis: true });
+
+  doc.font('Helvetica').fontSize(5.5).fillColor('#444444');
+  doc.text('Terms: Medicines without valid prescription will not be accepted back. Keep medicines out of reach of children. Computer-generated invoice.', leftX + 8, summaryBottomY + 16, { width: 300 });
 
   // User & Time & OLD Balance
-  doc.font('Helvetica').fontSize(7.5);
-  doc.text(`User:${cashier}   Time:${timeStr}`, 320, summaryBottomY + 3);
-  doc.text(`OLD Balance   ${oldBalance}`, 320, summaryBottomY + 12);
+  doc.font('Helvetica').fontSize(7.5).fillColor('#000000');
+  doc.text(`User:${cashier}   Time:${timeStr}`, 320, summaryBottomY + 4);
+  doc.text(`OLD Balance   ${oldBalance}`, 320, summaryBottomY + 16);
 
   doc.end();
   return doc;
