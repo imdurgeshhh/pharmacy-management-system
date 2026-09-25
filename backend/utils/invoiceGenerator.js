@@ -38,8 +38,20 @@ function generateInvoice(data, res) {
   const docTitle = (data.title || 'ESTIMATE ORDER').toUpperCase();
   const subTitle = (data.subTitle || 'ROUGH ESTIMATE').toUpperCase();
   const paymentMode = (data.paymentMode || data.payment_mode || 'CREDIT').toUpperCase();
-  const dateStr = data.date || new Date().toLocaleDateString('en-GB'); // DD/MM/YYYY
-  const timeStr = data.time || new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  let dateStr = data.date;
+  if (dateStr instanceof Date) {
+    dateStr = dateStr.toLocaleDateString('en-GB');
+  } else if (typeof dateStr === 'string' && (dateStr.includes('T') || dateStr.includes('-')) && !isNaN(Date.parse(dateStr)) && !dateStr.includes('/')) {
+    dateStr = new Date(dateStr).toLocaleDateString('en-GB');
+  } else if (!dateStr) {
+    dateStr = new Date().toLocaleDateString('en-GB');
+  }
+
+  let timeStr = data.time;
+  if (!timeStr) {
+    const d = data.date instanceof Date ? data.date : new Date();
+    timeStr = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
   const eInvoice = data.eInvoice || '';
   const cashier = data.cashier || data.userName || data.employeeName || data.employee_name || 'Admin';
   const oldBalance = parseFloat(data.oldBalance || data.credit_balance || data.summary?.balance || 0).toFixed(2);
@@ -54,7 +66,7 @@ function generateInvoice(data, res) {
   const formattedItems = items.map((it) => {
     const qty = parseFloat(it.qty) || 0;
     const freeQty = parseFloat(it.free_qty || it.freeQty || 0);
-    const mrp = parseFloat(it.mrp || it.price || 0);
+    const mrp = parseFloat(it.selling_price || it.mrp || it.price || 0);
     const oldMrp = parseFloat(it.old_mrp || it.oldMrp || 0);
     const trRate = parseFloat(it.trade_rate || it.tradeRate || it.trRate || it.price || mrp);
     const schPct = parseFloat(it.scheme_pct || it.schemePct || it.schPct || it.sch_pct || 0);
@@ -346,15 +358,15 @@ function generateInvoice(data, res) {
 
   // Amount in words (Bottom Left)
   doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#000000');
-  doc.text(wordsStr, leftX + 8, summaryBottomY + 4, { width: 300, ellipsis: true });
+  doc.text(wordsStr, leftX + 8, summaryBottomY + 4, { width: 280, ellipsis: true });
 
   doc.font('Helvetica').fontSize(5.5).fillColor('#444444');
-  doc.text('Terms: Medicines without valid prescription will not be accepted back. Keep medicines out of reach of children. Computer-generated invoice.', leftX + 8, summaryBottomY + 16, { width: 300 });
+  doc.text('Terms: Medicines without valid prescription will not be accepted back. Keep out of reach of children.', leftX + 8, summaryBottomY + 16, { width: 280 });
 
   // User & Time & OLD Balance
   doc.font('Helvetica').fontSize(7.5).fillColor('#000000');
-  doc.text(`User:${cashier}   Time:${timeStr}`, 320, summaryBottomY + 4);
-  doc.text(`OLD Balance   ${oldBalance}`, 320, summaryBottomY + 16);
+  doc.text(`User:${cashier}   Time:${timeStr}`, 310, summaryBottomY + 4);
+  doc.text(`OLD Balance   ${oldBalance}`, 310, summaryBottomY + 16);
 
   doc.end();
   return doc;

@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const { normalizeQty, fromTotalUnits, formatQty } = require('../utils/quantity');
 
 const VALID_SCHEDULES = ['NONE', 'G', 'H', 'H1', 'X'];
 
@@ -12,14 +13,32 @@ async function findOrCreateMedicine(client, medicineName, schedule, adminId, ext
     const category = (extra.category || extra.medicine_category || 'General').trim() || 'General';
     const dosageForm = (extra.dosage_form || extra.form || '').trim() || null;
     const strength = (extra.strength || '').trim() || null;
+    const requestedUnitsPerStrip = extra.units_per_strip !== undefined && extra.units_per_strip !== null
+        ? Math.max(1, parseInt(extra.units_per_strip, 10) || 1)
+        : null;
 
     const existing = await client.query(
-        `SELECT id, schedule FROM medicines WHERE LOWER(name) = LOWER($1) AND admin_id = $2 LIMIT 1`,
+        `SELECT id, schedule, units_per_strip FROM medicines WHERE LOWER(name) = LOWER($1) AND admin_id = $2 LIMIT 1`,
         [name, adminId]
     );
     if (existing.rows.length > 0) {
         const medId = existing.rows[0].id;
-        if (brandName || saltComp || category !== 'General' || dosageForm || strength) {
+        const currentUps = parseInt(existing.rows[0].units_per_strip, 10) || 1;
+        let updateUps = null;
+
+        if (requestedUnitsPerStrip !== null && requestedUnitsPerStrip !== currentUps) {
+            // Check if there is active stock
+            const stockCheck = await client.query(
+                'SELECT COALESCE(SUM(stock_qty), 0) as total_stock FROM INVENTORY WHERE medicine_id = $1 AND admin_id = $2',
+                [medId, adminId]
+            );
+            const currentStock = parseInt(stockCheck.rows[0]?.total_stock, 10) || 0;
+            if (currentStock === 0 || extra.confirm_pack_size_change === true) {
+                updateUps = requestedUnitsPerStrip;
+            }
+        }
+
+        if (brandName || saltComp || category !== 'General' || dosageForm || strength || updateUps !== null) {
             await client.query(
                 `UPDATE medicines SET
                     brand_name = COALESCE(NULLIF($1, ''), brand_name),
@@ -27,9 +46,10 @@ async function findOrCreateMedicine(client, medicineName, schedule, adminId, ext
                     category = COALESCE(NULLIF($3, ''), category),
                     medicine_category = COALESCE(NULLIF($3, ''), medicine_category),
                     dosage_form = COALESCE(NULLIF($4, ''), dosage_form),
-                    strength = COALESCE(NULLIF($5, ''), strength)
-                 WHERE id = $6 AND admin_id = $7`,
-                [brandName, saltComp, category, dosageForm, strength, medId, adminId]
+                    strength = COALESCE(NULLIF($5, ''), strength),
+                    units_per_strip = COALESCE($6, units_per_strip)
+                 WHERE id = $7 AND admin_id = $8`,
+                [brandName, saltComp, category, dosageForm, strength, updateUps, medId, adminId]
             );
         }
         return medId;
@@ -42,14 +62,15 @@ async function findOrCreateMedicine(client, medicineName, schedule, adminId, ext
         throw err;
     }
 
+    const unitsPerStrip = requestedUnitsPerStrip || 1;
     const created = await client.query(
         `INSERT INTO medicines (
             name, medicine_name, brand_name, salt_composition,
             category, medicine_category, dosage_form, strength,
-            barcode, description, schedule, admin_id
+            barcode, description, schedule, units_per_strip, admin_id
          )
-         VALUES ($1, $1, $2, $3, $4, $4, $5, $6, NULL, '', $7, $8) RETURNING id`,
-        [name, brandName, saltComp, category, dosageForm, strength, medSchedule, adminId]
+         VALUES ($1, $1, $2, $3, $4, $4, $5, $6, NULL, '', $7, $8, $9) RETURNING id`,
+        [name, brandName, saltComp, category, dosageForm, strength, medSchedule, unitsPerStrip, adminId]
     );
     return created.rows[0].id;
 }
@@ -128,26 +149,60 @@ exports.createPurchase = async (req, res) => {
                 }
             }
 
+            // Fetch master units_per_strip for this medicine
+            const medInfo = await client.query(
+                'SELECT COALESCE(units_per_strip, 1) as units_per_strip FROM MEDICINES WHERE id = $1 AND admin_id = $2',
+                [medicineId, adminId]
+            );
+            const unitsPerStrip = parseInt(medInfo.rows[0]?.units_per_strip, 10) || 1;
+
             const batchNumber = (item.batch_number || `BATCH-${Date.now()}`).trim();
-            const qty = parseInt(item.qty, 10);
-            const purchasePrice = parseFloat(item.price || item.purchase_price);
+            const purchasePrice = parseFloat(item.price || item.purchase_price || 0);
             const itemTax = parseFloat(item.tax || 0);
 
-            if (!qty || qty <= 0) {
+            // Compute total base units (tablets)
+            const rawStrips = item.strips !== undefined ? item.strips : (item.strips_qty !== undefined ? item.strips_qty : undefined);
+            const rawLoose = item.loose !== undefined ? item.loose : (item.loose_qty !== undefined ? item.loose_qty : undefined);
+
+            let totalUnits = 0;
+            let stripsQty = 0;
+            let looseQty = 0;
+
+            if (rawStrips !== undefined || rawLoose !== undefined) {
+                const norm = normalizeQty({ strips: rawStrips || 0, loose: rawLoose || 0, unitsPerStrip });
+                totalUnits = norm.totalUnits;
+                stripsQty = norm.strips;
+                looseQty = norm.loose;
+            } else {
+                totalUnits = parseInt(item.qty, 10);
+                const decomp = fromTotalUnits(totalUnits, unitsPerStrip);
+                stripsQty = decomp.strips;
+                looseQty = decomp.loose;
+            }
+
+            if (isNaN(totalUnits) || totalUnits <= 0) {
                 const err = new Error(`Invalid quantity for item: ${item.name || batchNumber}`);
                 err.statusCode = 400;
                 throw err;
             }
 
-            // Insert Purchase Item
+            const rawSellingPrice = item.selling_price !== undefined ? item.selling_price : item.mrp;
+            const sellingPrice = parseFloat(rawSellingPrice !== undefined && rawSellingPrice !== '' ? rawSellingPrice : (purchasePrice > 0 ? +(purchasePrice * 1.25).toFixed(2) : 0));
+            if (isNaN(sellingPrice) || sellingPrice < 0) {
+                const err = new Error(`selling_price must be a valid number >= 0 for item: ${item.name || item.medicine_name || batchNumber}`);
+                err.statusCode = 400;
+                throw err;
+            }
+
+            // Insert Purchase Item with units_per_strip, strips_qty, loose_qty, selling_price
             await client.query(
-                `INSERT INTO PURCHASE_ITEMS (purchase_id, medicine_id, batch_number, qty, price, tax)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
-                [purchaseId, medicineId, batchNumber, qty, purchasePrice, itemTax]
+                `INSERT INTO PURCHASE_ITEMS (purchase_id, medicine_id, batch_number, qty, price, tax, units_per_strip, strips_qty, loose_qty, selling_price)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [purchaseId, medicineId, batchNumber, totalUnits, purchasePrice, itemTax, unitsPerStrip, stripsQty, looseQty, sellingPrice]
             );
 
-            // Upsert Inventory for this tenant
-            const mrp = parseFloat(item.mrp || purchasePrice * 1.25);
+            // Upsert Inventory for this tenant in base units
+            const mrp = sellingPrice;
             const expiryDate = item.expiry_date || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
             const taxPercentage = parseFloat(item.tax_percentage || 12.00);
             const tradeRate = item.trade_rate !== undefined ? parseFloat(item.trade_rate) : null;
@@ -161,17 +216,17 @@ exports.createPurchase = async (req, res) => {
             if (invCheck.rows.length > 0) {
                 await client.query(
                     `UPDATE INVENTORY 
-                     SET stock_qty = stock_qty + $1, purchase_price = $2, mrp = $3, expiry_date = $4,
+                     SET stock_qty = stock_qty + $1, purchase_price = $2, selling_price = $3, mrp = $3, expiry_date = $4,
                          tax_percentage = $5, trade_rate = COALESCE($6, trade_rate), old_mrp = COALESCE($7, old_mrp)
                      WHERE id = $8 AND admin_id = $9`,
-                    [qty, purchasePrice, mrp, expiryDate, taxPercentage, tradeRate, oldMrp, invCheck.rows[0].id, adminId]
+                    [totalUnits, purchasePrice, sellingPrice, expiryDate, taxPercentage, tradeRate, oldMrp, invCheck.rows[0].id, adminId]
                 );
             } else {
                 await client.query(
                     `INSERT INTO INVENTORY 
-                     (medicine_id, supplier_id, batch_number, stock_qty, expiry_date, purchase_price, mrp, tax_percentage, trade_rate, old_mrp, admin_id)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-                    [medicineId, resolvedSupplierId, batchNumber, qty, expiryDate, purchasePrice, mrp, taxPercentage, tradeRate, oldMrp, adminId]
+                     (medicine_id, supplier_id, batch_number, stock_qty, expiry_date, purchase_price, selling_price, mrp, tax_percentage, trade_rate, old_mrp, admin_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11)`,
+                    [medicineId, resolvedSupplierId, batchNumber, totalUnits, expiryDate, purchasePrice, sellingPrice, taxPercentage, tradeRate, oldMrp, adminId]
                 );
             }
         }
@@ -225,16 +280,23 @@ exports.getPurchaseById = async (req, res) => {
         }
 
         const itemsQuery = `
-            SELECT pi.*, COALESCE(m.medicine_name, m.name) as medicine_name, m.brand_name
+            SELECT pi.*, COALESCE(m.medicine_name, m.name) as medicine_name, m.brand_name,
+                   COALESCE(pi.units_per_strip, m.units_per_strip, 1) as units_per_strip,
+                   COALESCE(pi.strips_qty, 0) as strips_qty,
+                   COALESCE(pi.loose_qty, 0) as loose_qty
             FROM PURCHASE_ITEMS pi
             JOIN MEDICINES m ON pi.medicine_id = m.id
             WHERE pi.purchase_id = $1
         `;
         const itemsResult = await pool.query(itemsQuery, [id]);
+        const items = itemsResult.rows.map(it => ({
+            ...it,
+            formatted_qty: formatQty(it.qty, it.units_per_strip)
+        }));
 
         res.json({
             ...purchaseResult.rows[0],
-            items: itemsResult.rows
+            items
         });
     } catch (error) {
         console.error(error);

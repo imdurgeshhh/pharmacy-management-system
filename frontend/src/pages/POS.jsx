@@ -11,6 +11,7 @@ import MedicinePicker from '../components/pos/MedicinePicker';
 import ConfirmModal from '../components/common/ConfirmModal';
 import { generateInvoicePDF } from '../utils/receiptPrinter';
 import { getShopProfile, mapStoreResponse } from '../config/shop';
+import { toTotalUnits, fromTotalUnits, normalizeQty, pricePerUnit, lineAmount, formatQty } from '../utils/quantity';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
@@ -24,13 +25,15 @@ const billNo = () => `BILL-${Date.now().toString().slice(-6)}`;
 const computeRow = (r) => {
   const mrp   = parseFloat(r.mrp)      || 0;
   const qty   = parseFloat(r.qty)      || 0;
+  const ups   = parseInt(r.units_per_strip, 10) || 1;
   const gst   = parseFloat(r.gst_pct)  || 0;
   const disc  = parseFloat(r.disc_pct) || 0;
-  const base     = mrp * qty;
+  const unitPrice = pricePerUnit(mrp, ups);
+  const base     = +(qty * unitPrice).toFixed(2);
   const disc_amt = +(base * disc / 100).toFixed(2);
   const tax_amt  = +(base * gst  / 100).toFixed(2);
   const net_amt  = +(base - disc_amt + tax_amt).toFixed(2);
-  return { ...r, base, disc_amt, tax_amt, net_amt };
+  return { ...r, unitPrice, base, disc_amt, tax_amt, net_amt };
 };
 
 // ─── Input styles ─────────────────────────────────────────────────────────────
@@ -38,7 +41,17 @@ const iCls = 'w-full px-3 py-2 text-sm rounded-xl border border-gray-200 bg-whit
 const tiCls = 'w-full px-2 py-1 text-xs rounded-lg border border-gray-200 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 transition-[border-color,box-shadow] placeholder-gray-300';
 
 // ─── Empty row factory ────────────────────────────────────────────────────────
-const blankRow = () => ({ name: '', qty: 1, mrp: '', gst_pct: 12, disc_pct: '', editing: true });
+const blankRow = () => ({
+  name: '',
+  qty: 1,
+  strips: '',
+  loose_qty: '',
+  units_per_strip: 1,
+  mrp: '',
+  gst_pct: 12,
+  disc_pct: '',
+  editing: true
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT — Unified Single-Page Billing
@@ -58,14 +71,26 @@ export default function POS() {
 
     api.get('/inventory').then(r => {
       const data = Array.isArray(r.data) ? r.data : [];
-      setInventory(data.map(m => ({
-        id: m.id,
-        inventory_id: m.inventory_id || m.id,
-        label: m.name || m.medicine_name || '',
-        mrp: parseFloat(m.mrp) || 0,
-        stock_qty: parseFloat(m.total_stock) || 0,
-        tax_percentage: parseFloat(m.tax_percentage) || 12,
-      })).filter(m => m.label));
+      setInventory(data.map(m => {
+        const effectiveSellingPrice = (m.selling_price !== undefined && m.selling_price !== null && Number(m.selling_price) > 0)
+          ? parseFloat(m.selling_price)
+          : ((m.mrp !== undefined && m.mrp !== null && Number(m.mrp) > 0)
+            ? parseFloat(m.mrp)
+            : (parseFloat(m.purchase_price) || 0));
+
+        return {
+          id: m.id,
+          inventory_id: m.inventory_id || m.id,
+          label: m.name || m.medicine_name || '',
+          selling_price: effectiveSellingPrice,
+          mrp: effectiveSellingPrice,
+          purchase_price: parseFloat(m.purchase_price) || 0,
+          stock_qty: parseFloat(m.total_stock) || 0,
+          tax_percentage: parseFloat(m.tax_percentage) || 12,
+          units_per_strip: parseInt(m.units_per_strip, 10) || 1,
+          pack_size: m.pack_size || '1',
+        };
+      }).filter(m => m.label));
       setInventoryError('');
     }).catch((err) => {
       setInventory([]);
@@ -95,27 +120,84 @@ export default function POS() {
   const updateRow = (idx, field, value) =>
     setRows(p => p.map((r, i) => i === idx ? { ...r, [field]: value } : r));
 
+  const updateRowStrips = (idx, stripsVal, looseVal) => {
+    setRows(p => p.map((r, i) => {
+      if (i !== idx) return r;
+      const ups = parseInt(r.units_per_strip, 10) || 1;
+      const sVal = stripsVal !== undefined ? stripsVal : (r.strips ?? '');
+      const lVal = looseVal !== undefined ? looseVal : (r.loose_qty ?? '');
+      const numStrips = parseInt(sVal, 10) || 0;
+      const numLoose = parseInt(lVal, 10) || 0;
+      const totalUnits = (numStrips * ups) + numLoose;
+      return {
+        ...r,
+        strips: sVal,
+        loose_qty: lVal,
+        qty: totalUnits > 0 ? totalUnits : (sVal === '' && lVal === '' ? '' : 0)
+      };
+    }));
+  };
+
+  const normalizeRow = (idx) => {
+    setRows(p => p.map((r, i) => {
+      if (i !== idx || (r.units_per_strip || 1) <= 1) return r;
+      const norm = normalizeQty({
+        strips: r.strips || 0,
+        loose: r.loose_qty || 0,
+        unitsPerStrip: r.units_per_strip || 1
+      });
+      return {
+        ...r,
+        strips: norm.strips > 0 ? String(norm.strips) : (norm.loose > 0 ? '0' : ''),
+        loose_qty: String(norm.loose),
+        qty: norm.totalUnits
+      };
+    }));
+  };
+
   const pickMedicine = (idx, med) => {
+    const ups = parseInt(med.units_per_strip, 10) || 1;
+    const initialStrips = ups > 1 ? '1' : '';
+    const initialLoose = ups > 1 ? '0' : '';
+    const initialQty = ups > 1 ? ups : 1;
+    const priceVal = med.selling_price !== undefined && med.selling_price !== '' ? med.selling_price : (med.mrp || '');
+
     setRows(p => p.map((r, i) => i === idx ? {
       ...r,
       name: med.label,
-      mrp: String(med.mrp || ''),
+      mrp: String(priceVal),
+      selling_price: String(priceVal),
       gst_pct: med.tax_percentage || 12,
       inventory_id: med.inventory_id,
       stock_qty: med.stock_qty,
+      units_per_strip: ups,
+      strips: initialStrips,
+      loose_qty: initialLoose,
+      qty: initialQty,
     } : r));
   };
 
   const handleMedicineChange = (idx, value) => {
     const matched = inventory.find(m => m.label.toLowerCase() === value.trim().toLowerCase());
     if (matched) {
+      const ups = parseInt(matched.units_per_strip, 10) || 1;
+      const initialStrips = ups > 1 ? '1' : '';
+      const initialLoose = ups > 1 ? '0' : '';
+      const initialQty = ups > 1 ? ups : 1;
+      const priceVal = matched.selling_price !== undefined && matched.selling_price !== '' ? matched.selling_price : (matched.mrp || '');
+
       setRows(p => p.map((r, i) => i === idx ? {
         ...r,
         name: value,
-        mrp: String(matched.mrp || ''),
+        mrp: String(priceVal),
+        selling_price: String(priceVal),
         gst_pct: matched.tax_percentage || 12,
         inventory_id: matched.inventory_id,
         stock_qty: matched.stock_qty,
+        units_per_strip: ups,
+        strips: initialStrips,
+        loose_qty: initialLoose,
+        qty: initialQty,
       } : r));
     } else {
       updateRow(idx, 'name', value);
@@ -159,6 +241,13 @@ export default function POS() {
 
   const hasItems = rows.some(r => r.name && r.qty && r.mrp);
 
+  const hasOverstock = rows.some(r => {
+    if (!r.name) return false;
+    const inv = inventory.find(m => m.label.toLowerCase() === r.name.toLowerCase());
+    const available = r.stock_qty ?? inv?.stock_qty;
+    return available !== undefined && parseFloat(r.qty) > available;
+  });
+
   const handleSave = async () => {
     if (!hasItems) {
       setValidationAlert('Please add at least one medicine with valid quantity and MRP before saving.');
@@ -175,7 +264,8 @@ export default function POS() {
         const inv = inventory.find(m => m.label.toLowerCase() === r.name.toLowerCase());
         const available = r.stock_qty ?? inv?.stock_qty;
         if (available !== undefined && parseFloat(r.qty) > available) {
-          setValidationAlert(`⚠️ Insufficient stock for "${r.name}". Available: ${available}, Requested: ${r.qty}`);
+          const ups = r.units_per_strip || inv?.units_per_strip || 1;
+          setValidationAlert(`⚠️ Stock kam hai for "${r.name}". Available: ${formatQty(available, ups)}, Requested: ${formatQty(r.qty, ups)}`);
           setSaving(false);
           return;
         }
@@ -183,19 +273,28 @@ export default function POS() {
 
       const invItems = validRows.map(r => {
         const inv = inventory.find(m => m.label.toLowerCase() === r.name.toLowerCase());
+        const ups = r.units_per_strip || inv?.units_per_strip || 1;
+        const norm = normalizeQty({ strips: r.strips || 0, loose: r.loose_qty || 0, unitsPerStrip: ups });
         return {
           inventory_id: r.inventory_id || inv?.inventory_id || inv?.id,
           name: r.name,
-          qty: parseFloat(r.qty) || 1,
+          qty: ups > 1 ? norm.totalUnits : (parseFloat(r.qty) || 1),
+          strips: ups > 1 ? norm.strips : 0,
+          loose: ups > 1 ? norm.loose : 0,
+          strips_qty: ups > 1 ? norm.strips : 0,
+          loose_qty: ups > 1 ? norm.loose : 0,
+          units_per_strip: ups,
           free_qty: parseFloat(r.free_qty) || 0,
           price: parseFloat(r.mrp) || 0,
+          selling_price: parseFloat(r.selling_price || r.mrp) || 0,
+          mrp: parseFloat(r.selling_price || r.mrp) || 0,
           old_mrp: parseFloat(r.old_mrp) || 0,
           tax: r.tax_amt,
           discount_pct: parseFloat(r.disc_pct) || 0,
           scheme_pct: parseFloat(r.scheme_pct) || 0,
           trade_rate: parseFloat(r.trade_rate || inv?.trade_rate || inv?.purchase_price || r.mrp) || 0,
           hsn_code: r.hsn_code || inv?.hsn_code || '3004',
-          pack: r.pack || inv?.pack_size || '1',
+          pack: ups > 1 ? `${ups} TAB` : (r.pack || inv?.pack_size || '1'),
         };
       });
 
@@ -362,11 +461,11 @@ export default function POS() {
           </legend>
 
           <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Medicine items list">
-            <table className="w-full text-xs" style={{ minWidth: 760 }}>
+            <table className="w-full text-xs" style={{ minWidth: 880 }}>
               <thead className="bg-green-50 border-b border-green-100 text-green-950 uppercase tracking-wider font-bold">
                 <tr>
-                  <th id="th-pos-med" scope="col" className="px-3 py-2.5 text-left font-bold w-40 text-green-950">Medicine</th>
-                  <th id="th-pos-qty" scope="col" className="px-2 py-2.5 text-center font-bold w-16 text-green-950">Qty</th>
+                  <th id="th-pos-med" scope="col" className="px-3 py-2.5 text-left font-bold min-w-[170px] text-green-950">Medicine</th>
+                  <th id="th-pos-qty" scope="col" className="px-2 py-2.5 text-center font-bold min-w-[175px] text-green-950">Qty</th>
                   <th id="th-pos-mrp" scope="col" className="px-2 py-2.5 text-left font-bold w-20 text-green-950">MRP</th>
                   <th id="th-pos-gst" scope="col" className="px-2 py-2.5 text-center font-bold w-16 text-green-950">GST%</th>
                   <th id="th-pos-tax" scope="col" className="px-2 py-2.5 text-right font-bold w-20 text-green-950">Tax</th>
@@ -380,6 +479,9 @@ export default function POS() {
                 {rows.map((row, idx) => {
                   const c = computed[idx];
                   const isEditing = row.editing;
+                  const inv = inventory.find(m => m.label.toLowerCase() === (row.name || '').toLowerCase());
+                  const availStock = row.stock_qty ?? inv?.stock_qty;
+                  const isOverstock = availStock !== undefined && parseFloat(row.qty) > availStock;
 
                   return (
                     <tr key={idx} className={`transition-colors ${isEditing ? 'bg-green-50/60' : 'hover:bg-green-50/30'}`}>
@@ -410,23 +512,99 @@ export default function POS() {
                       {/* Qty */}
                       <td className="px-2 py-2 text-center">
                         {isEditing ? (
-                          <div>
-                            <label htmlFor={`pos-qty-${idx}`} className="sr-only">
-                              Quantity row {idx + 1}
-                            </label>
-                            <input
-                              id={`pos-qty-${idx}`}
-                              type="number"
-                              min="1"
-                              value={row.qty}
-                              aria-labelledby="th-pos-qty"
-                              aria-label={`Quantity for row ${idx + 1}`}
-                              onChange={e => updateRow(idx, 'qty', e.target.value)}
-                              className={`${tiCls} text-center font-bold w-16`}
-                            />
-                          </div>
+                          row.units_per_strip > 1 ? (
+                            <div className="flex flex-col items-center justify-center gap-1.5 min-w-[160px]">
+                              <div className="inline-flex items-center gap-2 bg-gray-50/90 p-1.5 rounded-xl border border-gray-200/90 shadow-2xs">
+                                <div className="flex flex-col items-center">
+                                  <label
+                                    htmlFor={`pos-strip-${idx}`}
+                                    className="text-[9px] text-gray-500 font-extrabold uppercase tracking-wider mb-0.5 select-none"
+                                  >
+                                    Strip
+                                  </label>
+                                  <input
+                                    id={`pos-strip-${idx}`}
+                                    type="number"
+                                    min="0"
+                                    placeholder="0"
+                                    value={row.strips !== undefined ? row.strips : ''}
+                                    aria-label={`Strips for row ${idx + 1}`}
+                                    onChange={e => updateRowStrips(idx, e.target.value, undefined)}
+                                    onBlur={() => normalizeRow(idx)}
+                                    onKeyDown={e => { if (e.key === 'Enter') normalizeRow(idx); }}
+                                    className="w-16 h-8 px-2 py-1 text-sm font-bold text-gray-900 bg-white text-center rounded-lg border border-gray-300 focus:border-green-600 focus:ring-2 focus:ring-green-500/20 focus:outline-none transition-all placeholder:text-gray-300 no-spinners tabular-nums shadow-2xs"
+                                  />
+                                </div>
+                                <span className="text-gray-400 font-bold text-sm mt-3.5 select-none" aria-hidden="true">+</span>
+                                <div className="flex flex-col items-center">
+                                  <label
+                                    htmlFor={`pos-loose-${idx}`}
+                                    className="text-[9px] text-gray-500 font-extrabold uppercase tracking-wider mb-0.5 select-none"
+                                  >
+                                    Loose
+                                  </label>
+                                  <input
+                                    id={`pos-loose-${idx}`}
+                                    type="number"
+                                    min="0"
+                                    placeholder="0"
+                                    value={row.loose_qty !== undefined ? row.loose_qty : ''}
+                                    aria-label={`Loose units for row ${idx + 1}`}
+                                    onChange={e => updateRowStrips(idx, undefined, e.target.value)}
+                                    onBlur={() => normalizeRow(idx)}
+                                    onKeyDown={e => { if (e.key === 'Enter') normalizeRow(idx); }}
+                                    className="w-16 h-8 px-2 py-1 text-sm font-bold text-gray-900 bg-white text-center rounded-lg border border-gray-300 focus:border-green-600 focus:ring-2 focus:ring-green-500/20 focus:outline-none transition-all placeholder:text-gray-300 no-spinners tabular-nums shadow-2xs"
+                                  />
+                                </div>
+                              </div>
+                              <input
+                                id={`pos-qty-${idx}`}
+                                type="hidden"
+                                value={row.qty}
+                                aria-label={`Quantity for row ${idx + 1}`}
+                              />
+                              <div className="text-[11px] text-green-950 font-bold bg-green-100/90 px-2.5 py-0.5 rounded-md tabular-nums border border-green-200/90 shadow-2xs whitespace-nowrap">
+                                = {row.qty || 0} Units <span className="text-green-700/90 font-medium">({row.units_per_strip}/str)</span>
+                              </div>
+                              {isOverstock && (
+                                <div className="text-[10px] text-red-700 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-200 tabular-nums">
+                                  ⚠️ Stock kam hai! ({availStock} tab)
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div>
+                              <label htmlFor={`pos-qty-${idx}`} className="sr-only">
+                                Quantity row {idx + 1}
+                              </label>
+                              <input
+                                id={`pos-qty-${idx}`}
+                                type="number"
+                                min="1"
+                                value={row.qty}
+                                aria-labelledby="th-pos-qty"
+                                aria-label={`Quantity for row ${idx + 1}`}
+                                onChange={e => updateRow(idx, 'qty', e.target.value)}
+                                className="w-16 h-8 px-2 py-1 text-sm font-bold text-gray-900 bg-white text-center rounded-lg border border-gray-300 focus:border-green-600 focus:ring-2 focus:ring-green-500/20 focus:outline-none transition-all placeholder:text-gray-300 tabular-nums no-spinners mx-auto block shadow-2xs"
+                              />
+                              {isOverstock && (
+                                <div className="text-[10px] text-red-700 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-200 tabular-nums mt-1">
+                                  ⚠️ Stock kam hai! ({availStock})
+                                </div>
+                              )}
+                            </div>
+                          )
                         ) : (
-                          <span className="font-bold text-gray-800">{row.qty}</span>
+                          <div className="flex flex-col items-center">
+                            <span className="font-bold text-gray-800 tabular-nums">
+                              {row.units_per_strip > 1 ? formatQty(row.qty, row.units_per_strip) : `${row.qty} Units`}
+                            </span>
+                            {isOverstock && (
+                              <span className="text-[10px] text-red-600 font-bold mt-0.5">
+                                ⚠️ Exceeds stock ({availStock})
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
 
@@ -450,9 +628,21 @@ export default function POS() {
                               title="Auto-fetched from stock entry (read-only)"
                               className={`${tiCls} w-20 tabular-nums bg-gray-100/70 text-gray-700 cursor-not-allowed border-gray-200 select-none font-medium`}
                             />
+                            {row.units_per_strip > 1 && parseFloat(row.mrp) > 0 && (
+                              <span className="block text-[10px] text-gray-500 font-mono mt-0.5">
+                                (₹{pricePerUnit(row.mrp, row.units_per_strip).toFixed(2)}/tab)
+                              </span>
+                            )}
                           </div>
                         ) : (
-                          <span className="text-gray-700 font-mono tabular-nums">{fmt(row.mrp)}</span>
+                          <div>
+                            <span className="text-gray-700 font-mono tabular-nums">{fmt(row.mrp)}</span>
+                            {row.units_per_strip > 1 && parseFloat(row.mrp) > 0 && (
+                              <span className="block text-[10px] text-gray-500 font-mono">
+                                (₹{pricePerUnit(row.mrp, row.units_per_strip).toFixed(2)}/tab)
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
 
@@ -637,7 +827,14 @@ export default function POS() {
               </p>
             )}
 
-            {!hasItems && !validationAlert && (
+            {hasOverstock && !validationAlert && (
+              <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-1.5" role="alert">
+                <AlertCircle size={15} className="shrink-0 text-red-600" aria-hidden="true" />
+                <span>One or more items exceed available stock. Please reduce quantity before saving.</span>
+              </p>
+            )}
+
+            {!hasItems && !validationAlert && !hasOverstock && (
               <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-2.5 flex items-center gap-1.5" role="note">
                 <AlertCircle size={14} className="shrink-0 text-amber-600" aria-hidden="true" />
                 <span>Add at least one medicine item to enable bill saving and PDF printing.</span>
@@ -649,10 +846,11 @@ export default function POS() {
               <button
                 type="button"
                 onClick={handleSave}
-                aria-disabled={saving || !hasItems}
+                disabled={saving || !hasItems || hasOverstock}
+                aria-disabled={saving || !hasItems || hasOverstock}
                 aria-label="Save Bill"
                 className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold shadow-md transition-[background-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1 min-h-[44px] ${
-                  saving || !hasItems
+                  saving || !hasItems || hasOverstock
                     ? 'bg-green-800/60 text-white/90 cursor-not-allowed opacity-80'
                     : 'bg-green-700 text-white hover:bg-green-800 shadow-green-200 active:scale-[0.96]'
                 }`}>

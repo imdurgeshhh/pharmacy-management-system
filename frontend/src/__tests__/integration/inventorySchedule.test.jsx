@@ -158,4 +158,71 @@ describe('Integration: Inventory Schedule & Filter Flow', () => {
     render(<Inventory />);
     expect(screen.queryByRole('button', { name: /Add Medicine/i })).not.toBeInTheDocument();
   });
+
+  it('locks units_per_strip in Edit modal when medicine has stock > 0, and allows it when stock is 0', async () => {
+    server.use(
+      http.get(`${API_BASE}/inventory`, () => {
+        return HttpResponse.json([
+          {
+            id: 101,
+            medicine_name: 'Active Stock Med',
+            brand_name: 'ActiveBrand',
+            salt_composition: 'ActiveSalt',
+            medicine_category: 'General',
+            dosage_form: 'Tablet',
+            strength: '500mg',
+            total_stock: 50,
+            units_per_strip: 10,
+            schedule: 'NONE'
+          },
+          {
+            id: 102,
+            medicine_name: 'Zero Stock Med',
+            brand_name: 'ZeroBrand',
+            salt_composition: 'ZeroSalt',
+            medicine_category: 'General',
+            dosage_form: 'Tablet',
+            strength: '250mg',
+            total_stock: 0,
+            units_per_strip: 10,
+            schedule: 'H'
+          }
+        ]);
+      })
+    );
+
+    const user = userEvent.setup();
+    render(<Inventory />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Active Stock Med')).toBeInTheDocument();
+      expect(screen.getByText('Zero Stock Med')).toBeInTheDocument();
+    });
+
+    // 1. Edit Active Stock Med (total_stock = 50)
+    const editActiveBtn = screen.getByLabelText(/Edit Active Stock Med/i);
+    await user.click(editActiveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Medicine Details')).toBeInTheDocument();
+    });
+
+    const upsInput = screen.getByLabelText(/Units per Strip/i);
+    expect(upsInput).toBeDisabled();
+    expect(screen.getByText(/Locked: Medicine has active stock \(50 units\)/i)).toBeInTheDocument();
+
+    const cancelBtn = screen.getByRole('button', { name: /Cancel/i });
+    await user.click(cancelBtn);
+
+    // 2. Edit Zero Stock Med (total_stock = 0)
+    const editZeroBtn = screen.getByLabelText(/Edit Zero Stock Med/i);
+    await user.click(editZeroBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Medicine Details')).toBeInTheDocument();
+    });
+
+    const upsZeroInput = screen.getByLabelText(/Units per Strip/i);
+    expect(upsZeroInput).not.toBeDisabled();
+  });
 });

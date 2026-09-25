@@ -35,6 +35,9 @@ export default function StoreSettingsModal({ isOpen, onClose, onSaved }) {
     email: '',
     dl_no: '',
     gstin: '',
+    food_lic_no: '',
+    pan_no: '',
+    aadhar_no: '',
     pharmacist_name: '',
     pharmacist_reg_no: '',
   });
@@ -69,6 +72,9 @@ export default function StoreSettingsModal({ isOpen, onClose, onSaved }) {
           email: data.email || '',
           dl_no: data.dl_no || '',
           gstin: data.gstin || '',
+          food_lic_no: data.food_lic_no || '',
+          pan_no: data.pan_no || '',
+          aadhar_no: data.aadhar_no || '',
           pharmacist_name: data.pharmacist_name || '',
           pharmacist_reg_no: data.pharmacist_reg_no || '',
         });
@@ -147,6 +153,9 @@ export default function StoreSettingsModal({ isOpen, onClose, onSaved }) {
         email: formData.email.trim(),
         dl_no: formData.dl_no.trim(),
         gstin: formData.gstin.trim().toUpperCase(),
+        food_lic_no: formData.food_lic_no ? formData.food_lic_no.trim() : '',
+        pan_no: formData.pan_no ? formData.pan_no.trim().toUpperCase() : '',
+        aadhar_no: formData.aadhar_no ? formData.aadhar_no.trim() : '',
         pharmacist_name: formData.pharmacist_name.trim(),
         pharmacist_reg_no: formData.pharmacist_reg_no.trim(),
       };
@@ -275,6 +284,38 @@ export default function StoreSettingsModal({ isOpen, onClose, onSaved }) {
               error={errors.gstin}
               icon={Award}
               maxLength={15}
+            />
+
+            <FormField
+              label="Food Licence (FSSAI) Number"
+              name="food_lic_no"
+              value={formData.food_lic_no}
+              onChange={handleChange}
+              placeholder="14-digit FSSAI Lic No."
+              error={errors.food_lic_no}
+              icon={FileText}
+            />
+
+            <FormField
+              label="Permanent Account Number (PAN)"
+              name="pan_no"
+              value={formData.pan_no}
+              onChange={handleChange}
+              placeholder="10-digit PAN (e.g. ABCDE1234F)"
+              error={errors.pan_no}
+              icon={Award}
+              maxLength={10}
+            />
+
+            <FormField
+              label="Aadhar Number (Optional)"
+              name="aadhar_no"
+              value={formData.aadhar_no}
+              onChange={handleChange}
+              placeholder="12-digit Aadhar No."
+              error={errors.aadhar_no}
+              icon={FileText}
+              maxLength={14}
             />
 
             <FormField

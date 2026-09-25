@@ -6,21 +6,22 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { API_BASE } from '../../mocks/handlers';
 import Purchases from '../../pages/Purchases';
-import useStore from '../../store/useStore';
+import useStore, { defaultPurchaseDraft } from '../../store/useStore';
 
 describe('Integration: Purchases Flow (Items Table -> Schedule Validation -> API Submission)', () => {
   beforeEach(() => {
     useStore.setState({
       user: { id: 1, name: 'Admin', role: 'admin' },
       token: 'jwt-token',
+      purchaseDraft: defaultPurchaseDraft(),
     });
     vi.clearAllMocks();
 
     server.use(
       http.get(`${API_BASE}/inventory`, () => {
         return HttpResponse.json([
-          { id: 1, name: 'Paracetamol 500mg', mrp: 20, schedule: 'NONE' },
-          { id: 2, name: 'Amoxicillin 250mg', mrp: 50, schedule: 'H' },
+          { id: 1, name: 'Paracetamol 500mg', mrp: 20, schedule: 'NONE', total_stock: 50, units_per_strip: 10 },
+          { id: 2, name: 'Amoxicillin 250mg', mrp: 50, schedule: 'H', total_stock: 0, units_per_strip: 10 },
         ]);
       }),
       http.get(`${API_BASE}/suppliers`, () => {
@@ -158,5 +159,60 @@ describe('Integration: Purchases Flow (Items Table -> Schedule Validation -> API
     expect(capturedPayload.items[0].batch_number).toBe('BATCH-NEW-99');
     expect(capturedPayload.items[0].qty).toBe(20);
     expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('saved to stock'));
+  });
+
+  it('allows entering units_per_strip for a brand-new medicine and an existing medicine with 0 stock', async () => {
+    const user = userEvent.setup();
+    render(<Purchases />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Type medicine name…/i)).toBeInTheDocument();
+    });
+
+    // 1. Initial state (new medicine): med-ups is an active input
+    const upsInput = screen.getByLabelText(/Units per Strip/i);
+    expect(upsInput.tagName).toBe('INPUT');
+    expect(upsInput).not.toBeDisabled();
+
+    // 2. Select an existing medicine with 0 stock (Amoxicillin 250mg)
+    const medInput = screen.getByPlaceholderText(/Type medicine name…/i);
+    await user.type(medInput, 'Amoxicillin 250mg');
+    await waitFor(() => {
+      expect(screen.getByText('Amoxicillin 250mg')).toBeInTheDocument();
+    });
+    const optionBtn = screen.getByRole('option', { name: /Amoxicillin 250mg/i });
+    await user.click(optionBtn);
+
+    // units_per_strip should still be editable because total_stock is 0
+    const upsAmox = screen.getByLabelText(/Units per Strip/i);
+    expect(upsAmox.tagName).toBe('INPUT');
+    expect(upsAmox).not.toBeDisabled();
+    await user.clear(upsAmox);
+    await user.type(upsAmox, '15');
+    expect(upsAmox.value).toBe('15');
+  });
+
+  it('locks units_per_strip as read-only with note when existing medicine has stock > 0', async () => {
+    const user = userEvent.setup();
+    render(<Purchases />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Type medicine name…/i)).toBeInTheDocument();
+    });
+
+    // Select Paracetamol 500mg (total_stock = 50)
+    const medInput = screen.getByPlaceholderText(/Type medicine name…/i);
+    await user.type(medInput, 'Paracetamol 500mg');
+    await waitFor(() => {
+      expect(screen.getByText('Paracetamol 500mg')).toBeInTheDocument();
+    });
+    const optionBtn = screen.getByRole('option', { name: /Paracetamol 500mg/i });
+    await user.click(optionBtn);
+
+    // Units per Strip should be locked with explanatory message
+    await waitFor(() => {
+      expect(screen.getByText(/Locked: Active stock exists \(50 units\)/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('spinbutton', { name: /Units per Strip/i })).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,7 @@
 const { pool } = require('../config/db');
 const generateInvoice = require('../utils/invoiceGenerator');
 const { resolveStoreSettings } = require('../config/store');
+const { normalizeQty, fromTotalUnits, formatQty, pricePerUnit, lineAmount } = require('../utils/quantity');
 
 exports.generateInvoicePDF = async (req, res) => {
     const { saleId } = req.params;
@@ -31,10 +32,14 @@ exports.generateInvoicePDF = async (req, res) => {
                    COALESCE(m.name, m.medicine_name, 'Medicine') as name,
                    COALESCE(si.hsn_code, m.hsn_code, '3004') as hsn_code,
                    COALESCE(si.pack, m.pack_size, '1') as pack,
+                   COALESCE(si.units_per_strip, m.units_per_strip, 1) as units_per_strip,
+                   COALESCE(si.strips_qty, 0) as strips_qty,
+                   COALESCE(si.loose_qty, 0) as loose_qty,
                    i.batch_number, i.expiry_date,
                    COALESCE(si.old_mrp, i.old_mrp, 0.00) as old_mrp,
                    COALESCE(si.trade_rate, i.trade_rate, i.purchase_price, si.price) as trade_rate,
-                   COALESCE(i.mrp, si.price) as mrp
+                   COALESCE(i.selling_price, i.mrp, si.price) as mrp,
+                   COALESCE(i.selling_price, i.mrp, si.price) as selling_price
             FROM SALE_ITEMS si
             LEFT JOIN INVENTORY i ON si.inventory_id = i.id
             LEFT JOIN MEDICINES m ON i.medicine_id = m.id
@@ -43,7 +48,7 @@ exports.generateInvoicePDF = async (req, res) => {
         `;
         const itemsResult = await pool.query(itemsQuery, [saleId]);
         
-        const store = await resolveStoreSettings(pool);
+        const store = await resolveStoreSettings(pool, sale.admin_id || adminId);
 
         const createdAt = sale.created_at ? new Date(sale.created_at) : new Date();
         const dateStr = createdAt.toLocaleDateString('en-GB'); // DD/MM/YYYY
@@ -77,10 +82,19 @@ exports.generateInvoicePDF = async (req, res) => {
                 const netRate = parseFloat(item.net_rate) || (tradeRate * (1 - schemePct / 100) * (1 - discountPct / 100));
                 const total = parseFloat(item.net_total) || (netRate * qty);
 
+                const unitsPerStrip = parseInt(item.units_per_strip, 10) || 1;
+                const stripsQty = parseFloat(item.strips_qty) || 0;
+                let medDisplayName = item.name;
+                if (unitsPerStrip > 1 && stripsQty > 0) {
+                    medDisplayName = `${item.name} (${stripsQty} STR × ${unitsPerStrip})`;
+                }
+
                 return {
                     srNo: index + 1,
-                    medicineName: item.name,
-                    pack: item.pack || '1',
+                    medicineName: medDisplayName,
+                    pack: item.pack || (unitsPerStrip > 1 ? `${unitsPerStrip} TAB` : '1'),
+                    unitsPerStrip: unitsPerStrip,
+                    stripsQty: stripsQty,
                     hsnCode: item.hsn_code || '3004',
                     batchNo: item.batch_number || 'N/A',
                     expDate: expStr,
@@ -128,7 +142,7 @@ exports.previewInvoicePDF = async (req, res) => {
             freight_amount = 0, round_off = 0, sub_total = 0
         } = req.body;
 
-        const store = await resolveStoreSettings(pool);
+        const store = await resolveStoreSettings(pool, req.adminId);
         const now = new Date();
         const dateStr = now.toLocaleDateString('en-GB');
         const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -158,10 +172,19 @@ exports.previewInvoicePDF = async (req, res) => {
                 const netRate = tradeRate * (1 - schemePct / 100) * (1 - discountPct / 100);
                 const total = netRate * qty;
 
+                const unitsPerStrip = parseInt(item.units_per_strip, 10) || 1;
+                const stripsQty = parseFloat(item.strips_qty) || 0;
+                let medDisplayName = item.name || item.medicine_name || 'Medicine';
+                if (unitsPerStrip > 1 && stripsQty > 0) {
+                    medDisplayName = `${medDisplayName} (${stripsQty} STR × ${unitsPerStrip})`;
+                }
+
                 return {
                     srNo: index + 1,
-                    medicineName: item.name || item.medicine_name || 'Medicine',
-                    pack: item.pack || '1',
+                    medicineName: medDisplayName,
+                    pack: item.pack || (unitsPerStrip > 1 ? `${unitsPerStrip} TAB` : '1'),
+                    unitsPerStrip: unitsPerStrip,
+                    stripsQty: stripsQty,
                     hsnCode: item.hsn_code || '3004',
                     batchNo: item.batch_number || 'N/A',
                     expDate: item.expiry_date || '--/--',
@@ -303,16 +326,14 @@ exports.createSale = async (req, res) => {
         // 3. Insert Sale Items and Deduct Inventory within tenant
         for (const item of items) {
             let invRecord = null;
-            const requestedQty = parseFloat(item.qty) || 1;
-            const freeQty = parseInt(item.free_qty, 10) || 0;
-            const totalStockDeduct = requestedQty + freeQty;
             const itemName = item.name || item.medicine_name || `Item #${item.inventory_id}`;
 
             // Step A: Find inventory by inventory_id in this tenant
             if (item.inventory_id) {
                 const invCheck = await client.query(
-                    `SELECT i.id, i.medicine_id, i.stock_qty, i.mrp, i.purchase_price, i.trade_rate, i.old_mrp,
-                            COALESCE(m.name, m.medicine_name) as medicine_name, m.hsn_code, m.pack_size
+                    `SELECT i.id, i.medicine_id, i.stock_qty, i.selling_price, i.mrp, i.purchase_price, i.trade_rate, i.old_mrp,
+                            COALESCE(m.name, m.medicine_name) as medicine_name, m.hsn_code, m.pack_size,
+                            COALESCE(m.units_per_strip, 1) as units_per_strip
                      FROM INVENTORY i
                      LEFT JOIN MEDICINES m ON i.medicine_id = m.id
                      WHERE i.id = $1 AND i.admin_id = $2`,
@@ -324,16 +345,17 @@ exports.createSale = async (req, res) => {
             }
 
             // Step B: Find by medicine_id in this tenant
-            if (!invRecord && item.inventory_id) {
+            if (!invRecord && item.medicine_id) {
                 const medCheck = await client.query(
-                    `SELECT i.id, i.medicine_id, i.stock_qty, i.mrp, i.purchase_price, i.trade_rate, i.old_mrp,
-                            COALESCE(m.name, m.medicine_name) as medicine_name, m.hsn_code, m.pack_size
+                    `SELECT i.id, i.medicine_id, i.stock_qty, i.selling_price, i.mrp, i.purchase_price, i.trade_rate, i.old_mrp,
+                            COALESCE(m.name, m.medicine_name) as medicine_name, m.hsn_code, m.pack_size,
+                            COALESCE(m.units_per_strip, 1) as units_per_strip
                      FROM INVENTORY i
                      JOIN MEDICINES m ON i.medicine_id = m.id
                      WHERE i.medicine_id = $1 AND i.admin_id = $2
-                     ORDER BY (i.stock_qty >= $3) DESC, i.expiry_date ASC, i.id ASC
+                     ORDER BY (i.stock_qty > 0) DESC, i.expiry_date ASC, i.id ASC
                      LIMIT 1`,
-                    [item.inventory_id, adminId, totalStockDeduct]
+                    [item.medicine_id, adminId]
                 );
                 if (medCheck.rows.length > 0) {
                     invRecord = medCheck.rows[0];
@@ -344,15 +366,16 @@ exports.createSale = async (req, res) => {
             if (!invRecord && (item.name || item.medicine_name)) {
                 const searchName = (item.name || item.medicine_name).trim();
                 const nameCheck = await client.query(
-                    `SELECT i.id, i.medicine_id, i.stock_qty, i.mrp, i.purchase_price, i.trade_rate, i.old_mrp,
-                            COALESCE(m.name, m.medicine_name) as medicine_name, m.hsn_code, m.pack_size
+                    `SELECT i.id, i.medicine_id, i.stock_qty, i.selling_price, i.mrp, i.purchase_price, i.trade_rate, i.old_mrp,
+                            COALESCE(m.name, m.medicine_name) as medicine_name, m.hsn_code, m.pack_size,
+                            COALESCE(m.units_per_strip, 1) as units_per_strip
                      FROM INVENTORY i
                      JOIN MEDICINES m ON i.medicine_id = m.id
                      WHERE (LOWER(m.name) = LOWER($1) OR LOWER(m.medicine_name) = LOWER($1))
                        AND i.admin_id = $2
-                     ORDER BY (i.stock_qty >= $3) DESC, i.expiry_date ASC, i.id ASC
+                     ORDER BY (i.stock_qty > 0) DESC, i.expiry_date ASC, i.id ASC
                      LIMIT 1`,
-                    [searchName, adminId, totalStockDeduct]
+                    [searchName, adminId]
                 );
                 if (nameCheck.rows.length > 0) {
                     invRecord = nameCheck.rows[0];
@@ -366,34 +389,81 @@ exports.createSale = async (req, res) => {
                 throw err;
             }
 
-            if (invRecord.stock_qty < totalStockDeduct) {
+            const unitsPerStrip = parseInt(invRecord.units_per_strip, 10) || 1;
+
+            const rawStrips = item.strips !== undefined ? item.strips : (item.strips_qty !== undefined ? item.strips_qty : undefined);
+            const rawLoose = item.loose !== undefined ? item.loose : (item.loose_qty !== undefined ? item.loose_qty : undefined);
+
+            let requestedQty = 0;
+            let stripsQty = 0;
+            let looseQty = 0;
+
+            if (rawStrips !== undefined || rawLoose !== undefined) {
+                const norm = normalizeQty({ strips: rawStrips || 0, loose: rawLoose || 0, unitsPerStrip });
+                requestedQty = norm.totalUnits;
+                stripsQty = norm.strips;
+                looseQty = norm.loose;
+            } else {
+                requestedQty = parseInt(item.qty || item.quantity || 1, 10);
+                const decomp = fromTotalUnits(requestedQty, unitsPerStrip);
+                stripsQty = decomp.strips;
+                looseQty = decomp.loose;
+            }
+
+            if (isNaN(requestedQty) || requestedQty <= 0) {
+                const err = new Error(`Invalid quantity for item: ${itemName}`);
+                err.statusCode = 400;
+                throw err;
+            }
+
+            const freeQty = parseInt(item.free_qty, 10) || 0;
+            const totalStockDeduct = requestedQty + freeQty;
+
+            // Atomic stock deduction with zero-stock race prevention
+            const deductRes = await client.query(
+                'UPDATE INVENTORY SET stock_qty = stock_qty - $1 WHERE id = $2 AND admin_id = $3 AND stock_qty >= $1 RETURNING stock_qty',
+                [totalStockDeduct, invRecord.id, adminId]
+            );
+
+            if (deductRes.rows.length === 0) {
                 const displayName = invRecord.medicine_name || itemName;
                 const err = new Error(`Insufficient stock for "${displayName}". Available: ${invRecord.stock_qty}, Requested: ${totalStockDeduct}`);
                 err.statusCode = 400;
                 throw err;
             }
 
-            // Deduct stock in this tenant
-            await client.query('UPDATE INVENTORY SET stock_qty = stock_qty - $1 WHERE id = $2 AND admin_id = $3', [totalStockDeduct, invRecord.id, adminId]);
+            // Selling price calculation — strictly uses selling_price, never purchase_price
+            const dbSellingPrice = parseFloat(
+                invRecord.selling_price > 0
+                    ? invRecord.selling_price
+                    : (invRecord.mrp > 0 ? invRecord.mrp : 0)
+            );
+            const clientSellingPrice = parseFloat(item.selling_price || item.mrp || item.strip_price || 0);
+            const stripPrice = dbSellingPrice > 0
+                ? dbSellingPrice
+                : (clientSellingPrice > 0 ? clientSellingPrice : parseFloat(invRecord.purchase_price || 0));
 
-            const tradeRate = parseFloat(item.trade_rate || invRecord.trade_rate || invRecord.purchase_price || item.price) || 0;
+            const itemPrice = unitsPerStrip > 1 ? pricePerUnit(stripPrice, unitsPerStrip) : stripPrice;
+            const rawTradeRate = parseFloat(item.trade_rate || invRecord.trade_rate || invRecord.purchase_price || itemPrice) || itemPrice;
+            const tradeRate = unitsPerStrip > 1 ? pricePerUnit(rawTradeRate, unitsPerStrip) : rawTradeRate;
             const schemePct = parseFloat(item.scheme_pct) || 0;
             const discountPct = parseFloat(item.discount_pct) || 0;
-            const netRate = parseFloat(item.net_rate) || (tradeRate * (1 - schemePct / 100) * (1 - discountPct / 100));
-            const netTotal = parseFloat(item.net_total) || (netRate * requestedQty);
-            const itemPrice = parseFloat(item.price || item.unit_price || invRecord.mrp || 0);
+            const netRate = parseFloat(item.net_rate) || +(tradeRate * (1 - schemePct / 100) * (1 - discountPct / 100)).toFixed(4);
+            const netTotal = parseFloat(item.net_total) || +(netRate * requestedQty).toFixed(2);
             const oldMrp = parseFloat(item.old_mrp || invRecord.old_mrp || 0);
 
             await client.query(
                 `INSERT INTO SALE_ITEMS (
                     sale_id, inventory_id, qty, price, tax, free_qty,
                     trade_rate, scheme_pct, discount_pct, net_rate, net_total,
-                    old_mrp, hsn_code, pack
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                    old_mrp, hsn_code, pack, units_per_strip, strips_qty, loose_qty
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
                 [
                     saleId, invRecord.id, requestedQty, itemPrice, parseFloat(item.tax || 0), freeQty,
                     tradeRate, schemePct, discountPct, netRate, netTotal,
-                    oldMrp, item.hsn_code || invRecord.hsn_code || '3004', item.pack || invRecord.pack_size || '1'
+                    oldMrp, item.hsn_code || invRecord.hsn_code || '3004',
+                    item.pack || (unitsPerStrip > 1 ? `${unitsPerStrip} TAB` : (invRecord.pack_size || '1')),
+                    unitsPerStrip, stripsQty, looseQty
                 ]
             );
         }
@@ -455,17 +525,24 @@ exports.getSaleById = async (req, res) => {
         }
 
         const itemsQuery = `
-            SELECT si.*, m.medicine_name, m.brand_name, i.batch_number, i.expiry_date
+            SELECT si.*, m.medicine_name, m.brand_name, i.batch_number, i.expiry_date,
+                   COALESCE(si.units_per_strip, m.units_per_strip, 1) as units_per_strip,
+                   COALESCE(si.strips_qty, 0) as strips_qty,
+                   COALESCE(si.loose_qty, 0) as loose_qty
             FROM SALE_ITEMS si
             JOIN INVENTORY i ON si.inventory_id = i.id
             JOIN MEDICINES m ON i.medicine_id = m.id
             WHERE si.sale_id = $1
         `;
         const itemsResult = await pool.query(itemsQuery, [id]);
+        const items = itemsResult.rows.map(it => ({
+            ...it,
+            formatted_qty: formatQty(it.qty, it.units_per_strip)
+        }));
 
         res.json({
             ...saleResult.rows[0],
-            items: itemsResult.rows
+            items
         });
     } catch (error) {
         console.error(error);

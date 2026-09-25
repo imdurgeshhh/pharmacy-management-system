@@ -130,4 +130,59 @@ describe('Integration: POS Flow (MedicinePicker -> Table -> Checkout API)', () =
       expect(alertSpy).toHaveBeenCalledWith(expect.stringMatching(/Insufficient stock/i));
     });
   });
+
+  it('calculates strip quantity correctly (e.g. 2 strips * 10 units = 20 total units) and submits in sale payload', async () => {
+    let salesPayload = null;
+    server.use(
+      http.post(`${API_BASE}/sales`, async ({ request }) => {
+        salesPayload = await request.json();
+        return HttpResponse.json({
+          success: true,
+          sale_id: 999,
+          bill_no: 'BILL-999',
+        });
+      })
+    );
+
+    const user = userEvent.setup();
+    render(<POS />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Medicine name…/i)).toBeInTheDocument();
+    });
+
+    const pickerInput = screen.getByPlaceholderText(/Medicine name…/i);
+    await user.type(pickerInput, 'Para');
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /Paracetamol 500mg/i })).toBeInTheDocument();
+    });
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Paracetamol 500mg/i }));
+
+    // Find the strip input
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Strips for row 1/i)).toBeInTheDocument();
+    });
+
+    const stripInput = screen.getByLabelText(/Strips for row 1/i);
+    await user.clear(stripInput);
+    await user.type(stripInput, '2');
+
+    // Verify calculation display shows 20 units
+    await waitFor(() => {
+      expect(screen.getByText(/=\s*20\s*Units/i)).toBeInTheDocument();
+    });
+
+    // Save Bill
+    const checkoutBtn = screen.getByRole('button', { name: /Save Bill/i });
+    await user.click(checkoutBtn);
+
+    await waitFor(() => {
+      expect(salesPayload).not.toBeNull();
+    });
+
+    expect(salesPayload.items[0].qty).toBe(20);
+    expect(salesPayload.items[0].strips_qty).toBe(2);
+    expect(salesPayload.items[0].units_per_strip).toBe(10);
+  });
 });

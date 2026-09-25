@@ -23,11 +23,16 @@ export const defaultPurchaseForm = () => ({
     category: 'General',
     dosage_form: 'Tablet',
     strength: '',
+    units_per_strip: 1,
+    total_stock: 0,
+    strips_qty: '',
+    loose_qty: '',
     qty: '',
     price: '',
+    selling_price: '',
     gst_pct: 12,
     disc_pct: '',
-    is_new: false,
+    is_new: true,
 });
 
 export const defaultPurchaseDraft = () => ({

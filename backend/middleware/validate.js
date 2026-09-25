@@ -181,7 +181,13 @@ const medicineSchema = validate([
   body('barcode')
     .optional({ nullable: true })
     .trim()
-    .isLength({ max: 100 }).withMessage('Barcode cannot exceed 100 characters')
+    .isLength({ max: 100 }).withMessage('Barcode cannot exceed 100 characters'),
+  body('units_per_strip')
+    .optional({ nullable: true })
+    .isInt({ min: 1 }).withMessage('units_per_strip must be an integer >= 1'),
+  body('selling_price')
+    .optional({ nullable: true })
+    .isFloat({ min: 0 }).withMessage('Selling price must be a number >= 0')
 ]);
 
 // ── Supplier Schemas ─────────────────────────────────────────────────────────
@@ -247,9 +253,23 @@ const saleSchema = validate([
     .isArray({ min: 1 }).withMessage('Sale must contain at least one item'),
   body('items.*')
     .custom((item) => {
-      const q = parseFloat(item.qty !== undefined ? item.qty : item.quantity);
-      if (isNaN(q) || q <= 0) {
-        throw new Error('Item quantity must be greater than 0');
+      const strips = item.strips !== undefined ? item.strips : item.strips_qty;
+      const loose = item.loose !== undefined ? item.loose : item.loose_qty;
+      const q = item.qty !== undefined ? item.qty : item.quantity;
+      if (strips !== undefined || loose !== undefined) {
+        const s = strips !== undefined ? parseFloat(strips) : 0;
+        const l = loose !== undefined ? parseFloat(loose) : 0;
+        if (isNaN(s) || isNaN(l) || s < 0 || l < 0) {
+          throw new Error('Strips and loose quantities must be non-negative numbers');
+        }
+        if (s === 0 && l === 0 && (q === undefined || parseFloat(q) <= 0)) {
+          throw new Error('Item quantity must be greater than 0');
+        }
+      } else {
+        const parsedQ = parseFloat(q);
+        if (isNaN(parsedQ) || parsedQ <= 0) {
+          throw new Error('Item quantity must be greater than 0');
+        }
       }
       return true;
     }),
@@ -268,7 +288,36 @@ const saleSchema = validate([
 // ── Purchase Schema ─────────────────────────────────────────────────────────
 const purchaseSchema = validate([
   body('items')
-    .isArray({ min: 1 }).withMessage('No items provided')
+    .isArray({ min: 1 }).withMessage('No items provided'),
+  body('items.*')
+    .custom((item) => {
+      const strips = item.strips !== undefined ? item.strips : item.strips_qty;
+      const loose = item.loose !== undefined ? item.loose : item.loose_qty;
+      const q = item.qty !== undefined ? item.qty : item.quantity;
+      if (strips !== undefined || loose !== undefined) {
+        const s = strips !== undefined ? parseFloat(strips) : 0;
+        const l = loose !== undefined ? parseFloat(loose) : 0;
+        if (isNaN(s) || isNaN(l) || s < 0 || l < 0) {
+          throw new Error('Strips and loose quantities must be non-negative numbers');
+        }
+        if (s === 0 && l === 0 && (q === undefined || parseFloat(q) <= 0)) {
+          throw new Error('Item quantity must be greater than 0');
+        }
+      } else if (q !== undefined) {
+        const parsedQ = parseFloat(q);
+        if (isNaN(parsedQ) || parsedQ <= 0) {
+          throw new Error('Item quantity must be greater than 0');
+        }
+      }
+      const rawSP = item.selling_price !== undefined ? item.selling_price : item.mrp;
+      if (rawSP !== undefined && rawSP !== null && rawSP !== '') {
+        const sp = parseFloat(rawSP);
+        if (isNaN(sp) || sp < 0) {
+          throw new Error('Selling price must be a valid number >= 0');
+        }
+      }
+      return true;
+    })
 ]);
 
 module.exports = {

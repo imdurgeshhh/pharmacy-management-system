@@ -62,6 +62,7 @@ const schemaQuery = `
       expiry_date DATE NOT NULL,
       purchase_price DECIMAL(10, 2) NOT NULL,
       mrp DECIMAL(10, 2) NOT NULL,
+      selling_price DECIMAL(10, 2) NOT NULL DEFAULT 0,
       tax_percentage DECIMAL(5, 2) DEFAULT 0.00,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(medicine_id, batch_number)
@@ -82,7 +83,8 @@ const schemaQuery = `
       batch_number VARCHAR(50) NOT NULL,
       qty INT NOT NULL,
       price DECIMAL(10, 2) NOT NULL,
-      tax DECIMAL(10, 2) NOT NULL DEFAULT 0
+      tax DECIMAL(10, 2) NOT NULL DEFAULT 0,
+      selling_price DECIMAL(10, 2) NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS SALES (

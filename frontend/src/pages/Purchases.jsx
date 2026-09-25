@@ -7,6 +7,7 @@ import {
 import PurchaseItemsTable from '../components/purchases/PurchaseItemsTable';
 import { SCHEDULE_CONFIG, SCHEDULE_OPTIONS } from '../utils/scheduleConfig';
 import useStore, { defaultPurchaseForm } from '../store/useStore';
+import { toTotalUnits, fromTotalUnits, normalizeQty, formatQty } from '../utils/quantity';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const GST_RATES = [0, 5, 12, 18, 28];
@@ -252,6 +253,7 @@ export default function Purchases() {
           // Live DB uses `name`; inventoryController join may alias it differently
           label: m.name || m.medicine_name || m.label || '',
           mrp: parseFloat(m.mrp) || 0,
+          selling_price: parseFloat(m.selling_price) || parseFloat(m.mrp) || 0,
           purchase_price: parseFloat(m.purchase_price) || 0,
           schedule: (m.schedule || 'NONE').toUpperCase(),
           brand_name: m.brand_name || '',
@@ -259,6 +261,8 @@ export default function Purchases() {
           category: m.medicine_category || m.category || 'General',
           dosage_form: m.dosage_form || 'Tablet',
           strength: m.strength || '',
+          units_per_strip: parseInt(m.units_per_strip, 10) || 1,
+          total_stock: parseFloat(m.total_stock) || 0,
         })).filter(m => m.label));
       })
       .catch(() => setMedicines([]));
@@ -315,7 +319,68 @@ export default function Purchases() {
     setFormValidationMsg('');
   };
 
+  const updatePurchaseQty = (sVal, lVal) => {
+    setForm(p => {
+      const ups = parseInt(p.units_per_strip, 10) || 1;
+      const strips = sVal !== undefined ? sVal : (p.strips_qty ?? '');
+      const loose = lVal !== undefined ? lVal : (p.loose_qty ?? '');
+      const numStrips = parseInt(strips, 10) || 0;
+      const numLoose = parseInt(loose, 10) || 0;
+      const totalUnits = (numStrips * ups) + numLoose;
+      return {
+        ...p,
+        strips_qty: strips,
+        loose_qty: loose,
+        qty: totalUnits > 0 ? String(totalUnits) : (strips === '' && loose === '' ? '' : '0')
+      };
+    });
+    setFormValidationMsg('');
+  };
+
+  const normalizePurchaseQty = () => {
+    setForm(p => {
+      const ups = parseInt(p.units_per_strip, 10) || 1;
+      if (ups <= 1) return p;
+      const norm = normalizeQty({
+        strips: p.strips_qty || 0,
+        loose: p.loose_qty || 0,
+        unitsPerStrip: ups
+      });
+      return {
+        ...p,
+        strips_qty: norm.strips > 0 ? String(norm.strips) : (norm.loose > 0 ? '0' : ''),
+        loose_qty: String(norm.loose),
+        qty: String(norm.totalUnits)
+      };
+    });
+  };
+
+  const updatePurchaseTotalUnits = (totalUnitsVal) => {
+    setForm(p => {
+      const ups = parseInt(p.units_per_strip, 10) || 1;
+      const valStr = totalUnitsVal;
+      const totalUnits = Math.max(0, parseInt(valStr, 10) || 0);
+      if (ups <= 1) {
+        return {
+          ...p,
+          qty: valStr,
+          strips_qty: '0',
+          loose_qty: String(totalUnits)
+        };
+      }
+      const decomp = fromTotalUnits(totalUnits, ups);
+      return {
+        ...p,
+        qty: valStr,
+        strips_qty: valStr !== '' ? String(decomp.strips) : '',
+        loose_qty: valStr !== '' ? String(decomp.loose) : ''
+      };
+    });
+    setFormValidationMsg('');
+  };
+
   const pickMed = (m) => {
+    const ups = parseInt(m.units_per_strip, 10) || 1;
     setForm(p => ({
       ...p,
       medicine_name: m.label,
@@ -326,8 +391,14 @@ export default function Purchases() {
       category: m.category || 'General',
       dosage_form: m.dosage_form || 'Tablet',
       strength: m.strength || '',
+      units_per_strip: ups,
+      total_stock: m.total_stock !== undefined ? m.total_stock : 0,
+      strips_qty: '',
+      loose_qty: '',
+      qty: '',
       is_new: false,
-      price: m.purchase_price ? String(m.purchase_price) : (m.mrp ? String(m.mrp) : p.price)
+      price: m.purchase_price ? String(m.purchase_price) : (m.mrp ? String(m.mrp) : p.price),
+      selling_price: m.selling_price ? String(m.selling_price) : (m.mrp ? String(m.mrp) : (p.selling_price || ''))
     }));
     setFormValidationMsg('');
   };
@@ -336,6 +407,7 @@ export default function Purchases() {
     setFormValidationMsg('');
     const match = medicines.find(m => m.label.trim().toLowerCase() === val.trim().toLowerCase());
     if (match) {
+      const ups = parseInt(match.units_per_strip, 10) || 1;
       setForm(p => ({
         ...p,
         medicine_name: val,
@@ -346,33 +418,47 @@ export default function Purchases() {
         category: match.category || 'General',
         dosage_form: match.dosage_form || 'Tablet',
         strength: match.strength || '',
+        units_per_strip: ups,
+        total_stock: match.total_stock !== undefined ? match.total_stock : 0,
         is_new: false,
-        price: p.price || (match.purchase_price ? String(match.purchase_price) : (match.mrp ? String(match.mrp) : p.price))
+        price: p.price || (match.purchase_price ? String(match.purchase_price) : (match.mrp ? String(match.mrp) : p.price)),
+        selling_price: p.selling_price || (match.selling_price ? String(match.selling_price) : (match.mrp ? String(match.mrp) : ''))
       }));
     } else {
-      setForm(p => ({
-        ...p,
-        medicine_name: val,
-        medicine_id: null,
-        schedule: p.medicine_id ? '' : p.schedule,
-        brand_name: p.medicine_id ? '' : p.brand_name,
-        salt_composition: p.medicine_id ? '' : p.salt_composition,
-        category: p.medicine_id ? 'General' : p.category,
-        dosage_form: p.medicine_id ? 'Tablet' : p.dosage_form,
-        strength: p.medicine_id ? '' : p.strength,
-        is_new: true
-      }));
+      setForm(p => {
+        const defaultUps = (p.dosage_form === 'Syrup' || p.dosage_form === 'Injection' || p.dosage_form === 'Drops' || p.dosage_form === 'Cream' || p.dosage_form === 'Gel') ? 1 : 10;
+        return {
+          ...p,
+          medicine_name: val,
+          medicine_id: null,
+          total_stock: 0,
+          schedule: p.medicine_id ? '' : p.schedule,
+          brand_name: p.medicine_id ? '' : p.brand_name,
+          salt_composition: p.medicine_id ? '' : p.salt_composition,
+          category: p.medicine_id ? 'General' : p.category,
+          dosage_form: p.medicine_id ? 'Tablet' : p.dosage_form,
+          strength: p.medicine_id ? '' : p.strength,
+          units_per_strip: p.medicine_id ? defaultUps : (p.units_per_strip || defaultUps),
+          selling_price: p.medicine_id ? '' : p.selling_price,
+          is_new: true
+        };
+      });
     }
   };
+
+  const matchedMed = form?.medicine_id ? medicines.find(m => m.id === form.medicine_id) : null;
+  const activeStock = matchedMed ? (matchedMed.total_stock || 0) : (form?.total_stock || 0);
+  const isUpsLocked = Boolean(form?.medicine_id && activeStock > 0);
 
   const cForm = compute(form);
   const isEditing = editIdx !== null && editIdx !== undefined && !Number.isNaN(Number(editIdx));
   const canAdd = Boolean(
     form?.medicine_name?.trim() &&
     form?.batch_number?.trim() &&
-    form?.qty &&
+    (parseFloat(form?.qty) > 0 || parseFloat(form?.strips_qty) > 0 || parseFloat(form?.loose_qty) > 0) &&
     form?.price &&
-    (!form?.is_new || form?.schedule)
+    (!form?.is_new || form?.schedule) &&
+    (isUpsLocked || (parseInt(form?.units_per_strip, 10) >= 1))
   );
 
   // ── Entries list ───────────────────────────────────────────────────────────
@@ -392,9 +478,19 @@ export default function Purchases() {
       document.getElementById('med-batch')?.focus();
       return;
     }
-    if (!form?.qty || parseFloat(form.qty) <= 0) {
+    if (!isUpsLocked && (!form?.units_per_strip || parseInt(form.units_per_strip, 10) < 1)) {
+      setFormValidationMsg('Please enter a valid Units per Strip (minimum 1).');
+      document.getElementById('med-ups')?.focus();
+      return;
+    }
+    const ups = parseInt(form.units_per_strip, 10) || 1;
+    let totalUnits = parseFloat(form.qty) || 0;
+    if (ups > 1 && (form.strips_qty || form.loose_qty)) {
+      totalUnits = (parseInt(form.strips_qty || 0, 10) * ups) + parseInt(form.loose_qty || 0, 10);
+    }
+    if (!totalUnits || totalUnits <= 0) {
       setFormValidationMsg('Please enter a valid quantity greater than zero.');
-      document.getElementById('med-qty')?.focus();
+      document.getElementById(ups > 1 ? 'med-strips' : 'med-qty')?.focus();
       return;
     }
     if (!form?.price || parseFloat(form.price) <= 0) {
@@ -402,10 +498,29 @@ export default function Purchases() {
       document.getElementById('med-price')?.focus();
       return;
     }
+    if (form?.selling_price !== undefined && form?.selling_price !== '' && parseFloat(form.selling_price) < 0) {
+      setFormValidationMsg('Please enter a valid selling price (greater than or equal to 0).');
+      document.getElementById('med-selling-price')?.focus();
+      return;
+    }
 
     setFormValidationMsg('');
+    const norm = normalizeQty({
+      strips: form.strips_qty || 0,
+      loose: form.loose_qty || 0,
+      unitsPerStrip: ups
+    });
+    const sellPrice = (form?.selling_price !== undefined && form?.selling_price !== '')
+      ? parseFloat(form.selling_price)
+      : (parseFloat(form.price) || 0);
+
     const row = {
-      ...compute(form),
+      ...compute({ ...form, qty: totalUnits }),
+      selling_price: sellPrice,
+      units_per_strip: ups,
+      strips_qty: ups > 1 ? norm.strips : 0,
+      loose_qty: ups > 1 ? norm.loose : 0,
+      formatted_qty: formatQty(totalUnits, ups),
       schedule: form?.schedule || 'NONE',
       is_new: form?.is_new
     };
@@ -419,7 +534,17 @@ export default function Purchases() {
   };
 
   const startEdit = (idx) => {
-    setForm({ ...entries[idx] });
+    const entry = entries[idx];
+    const ups = parseInt(entry.units_per_strip, 10) || 1;
+    const decomp = fromTotalUnits(entry.qty, ups);
+    setForm({
+      ...entry,
+      selling_price: entry.selling_price !== undefined ? String(entry.selling_price) : String(entry.mrp || ''),
+      units_per_strip: ups,
+      strips_qty: entry.strips_qty !== undefined ? String(entry.strips_qty) : (ups > 1 ? String(decomp.strips) : ''),
+      loose_qty: entry.loose_qty !== undefined ? String(entry.loose_qty) : (ups > 1 ? String(decomp.loose) : ''),
+      qty: String(entry.qty)
+    });
     setEditIdx(idx);
     setFormValidationMsg('');
   };
@@ -459,9 +584,13 @@ export default function Purchases() {
           strength:         e.strength || null,
           batch_number:     e.batch_number,
           qty:              parseFloat(e.qty),
+          units_per_strip:  parseInt(e.units_per_strip, 10) || 1,
+          strips_qty:       parseInt(e.strips_qty, 10) || 0,
+          loose_qty:        parseInt(e.loose_qty, 10) || 0,
           price:            parseFloat(e.final),
           tax:              e.tax_amt,
-          mrp:              parseFloat(e.price),
+          selling_price:    parseFloat(e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.price || 0)),
+          mrp:              parseFloat(e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.price || 0)),
           expiry_date:      e.expiry_date || null,
           tax_percentage:   parseFloat(e.gst_pct) || 0,
         })),
@@ -723,17 +852,127 @@ export default function Purchases() {
               </div>
             </div>
 
-            {/* Row 3: qty, price, gst%, tax, disc%, disc */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {/* Row 2b: Units per Strip / Pack Size & Quantity side by side */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <div>
-                <L t="Qty *" htmlFor="med-qty" />
-                <input id="med-qty" type="number" min="1" value={form.qty} onChange={e => sf('qty', e.target.value)}
-                  placeholder="0" aria-label="Quantity" className={`${iCls} text-center font-bold`} />
+                <L t={!isUpsLocked ? "Units per Strip (Pack Size) *" : "Units per Strip"} htmlFor="med-ups" />
+                {!isUpsLocked ? (
+                  <input
+                    id="med-ups"
+                    type="number"
+                    min="1"
+                    required
+                    value={form.units_per_strip !== undefined ? form.units_per_strip : 1}
+                    onChange={e => {
+                      const val = e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1);
+                      sf('units_per_strip', val);
+                      if (form.strips_qty || form.loose_qty) {
+                        const numVal = parseInt(val, 10) || 1;
+                        const s = parseInt(form.strips_qty || 0, 10);
+                        const l = parseInt(form.loose_qty || 0, 10);
+                        sf('qty', String((s * numVal) + l));
+                      }
+                    }}
+                    placeholder="10"
+                    aria-label="Units per Strip"
+                    className={iCls}
+                  />
+                ) : (
+                  <div className={`${iCls} bg-gray-50 text-gray-700 flex items-center justify-between cursor-not-allowed select-none font-medium`}>
+                    <span>{form.units_per_strip || 1} {form.units_per_strip > 1 ? 'Tablets / Strip' : 'Unit'}</span>
+                    <span className="text-[10px] uppercase font-bold text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded">Catalog</span>
+                  </div>
+                )}
+                {isUpsLocked ? (
+                  <span className="text-[11px] text-amber-700 mt-1 block font-medium">
+                    Locked: Active stock exists ({activeStock} units). Pack size can only be changed when stock is 0.
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-gray-500 mt-1 block">
+                    {form.units_per_strip > 1 ? `1 strip contains ${form.units_per_strip} tablets/capsules` : 'Single unit item (syrup, bottle, ointment)'}
+                  </span>
+                )}
               </div>
+
+              {/* Quantity input paired with Units per Strip */}
+              {(parseInt(form.units_per_strip, 10) || 1) > 1 ? (
+                <div>
+                  <L t="Qty (Tablets) *" htmlFor="med-qty" />
+                  <input
+                    id="med-qty"
+                    type="number"
+                    min="1"
+                    value={form.qty}
+                    onChange={e => updatePurchaseTotalUnits(e.target.value)}
+                    placeholder="0"
+                    aria-label="Quantity"
+                    className={`${iCls} text-center font-bold`}
+                  />
+                  <div className="flex items-center gap-1 mt-1 justify-center">
+                    <div className="flex items-center gap-1 text-[10px] text-gray-600 bg-gray-50 border border-gray-200 px-1 py-0.5 rounded">
+                      <span className="font-semibold">Str:</span>
+                      <input
+                        id="med-strips"
+                        type="number"
+                        min="0"
+                        value={form.strips_qty !== undefined ? form.strips_qty : ''}
+                        onChange={e => updatePurchaseQty(e.target.value, undefined)}
+                        onBlur={normalizePurchaseQty}
+                        aria-label="Strips received"
+                        className="w-10 text-center font-bold text-xs bg-white border border-gray-300 rounded px-0.5"
+                      />
+                    </div>
+                    <span className="text-gray-400 font-bold">+</span>
+                    <div className="flex items-center gap-1 text-[10px] text-gray-600 bg-gray-50 border border-gray-200 px-1 py-0.5 rounded">
+                      <span className="font-semibold">Loose:</span>
+                      <input
+                        id="med-loose"
+                        type="number"
+                        min="0"
+                        value={form.loose_qty !== undefined ? form.loose_qty : ''}
+                        onChange={e => updatePurchaseQty(undefined, e.target.value)}
+                        onBlur={normalizePurchaseQty}
+                        aria-label="Loose tablets received"
+                        className="w-10 text-center font-bold text-xs bg-white border border-gray-300 rounded px-0.5"
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-green-900 font-bold bg-green-50 px-1 py-0.5 rounded border border-green-200 mt-1 text-center tabular-nums">
+                    = {formatQty(form.qty || 0, form.units_per_strip)}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <L t="Qty *" htmlFor="med-qty" />
+                  <input id="med-qty" type="number" min="1" value={form.qty} onChange={e => sf('qty', e.target.value)}
+                    placeholder="0" aria-label="Quantity" className={`${iCls} text-center font-bold`} />
+                  <span className="text-[11px] text-gray-500 mt-1 block text-center">Total units</span>
+                </div>
+              )}
+            </div>
+
+            {/* Row 3: purchase price, selling price, gst%, tax, disc%, disc */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <div>
                 <L t="Purchase Price *" htmlFor="med-price" />
                 <input id="med-price" type="number" step="0.01" min="0" value={form.price} onChange={e => sf('price', e.target.value)}
                   placeholder="0.00" aria-label="Purchase price" className={iCls} />
+                {(parseInt(form.units_per_strip, 10) || 1) > 1 ? (
+                  <span className="text-[11px] text-gray-500 mt-1 block">Cost per strip</span>
+                ) : (
+                  <span className="text-[11px] text-gray-500 mt-1 block">Cost per unit</span>
+                )}
+              </div>
+              <div>
+                <L t="Selling Price *" htmlFor="med-selling-price" />
+                <input id="med-selling-price" type="number" step="0.01" min="0" value={form.selling_price !== undefined ? form.selling_price : ''}
+                  onChange={e => sf('selling_price', e.target.value)}
+                  placeholder="0.00" aria-label="Selling price" className={iCls} />
+                {(parseInt(form.units_per_strip, 10) || 1) > 1 ? (
+                  <span className="text-[11px] text-gray-500 mt-1 block">Sell price per strip</span>
+                ) : (
+                  <span className="text-[11px] text-gray-500 mt-1 block">Sell price per unit</span>
+                )}
               </div>
               <div>
                 <L t="GST %" htmlFor="med-gst" />

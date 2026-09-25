@@ -83,26 +83,27 @@ exports.addWholesaleSale = async (req, res) => {
             [medicine_name.trim(), adminId, qty]
         );
 
-        if (invCheck.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-                error: `No inventory stock found for "${medicine_name}". Please add stock via Purchases first.`
-            });
-        }
+        if (invCheck.rows.length > 0) {
+            const invRecord = invCheck.rows[0];
+            if (invRecord.stock_qty < qty) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    error: `Insufficient stock for "${invRecord.display_name}". Available: ${invRecord.stock_qty}, Requested: ${qty}.`
+                });
+            }
 
-        const invRecord = invCheck.rows[0];
-        if (invRecord.stock_qty < qty) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-                error: `Insufficient stock for "${invRecord.display_name}". Available: ${invRecord.stock_qty}, Requested: ${qty}.`
-            });
+            // Deduct stock atomically
+            const deductRes = await client.query(
+                'UPDATE INVENTORY SET stock_qty = stock_qty - $1 WHERE id = $2 AND admin_id = $3 AND stock_qty >= $1 RETURNING stock_qty',
+                [qty, invRecord.id, adminId]
+            );
+            if (deductRes.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    error: `Insufficient stock for "${invRecord.display_name}". Available: ${invRecord.stock_qty}, Requested: ${qty}.`
+                });
+            }
         }
-
-        // Deduct stock
-        await client.query(
-            'UPDATE INVENTORY SET stock_qty = stock_qty - $1 WHERE id = $2 AND admin_id = $3',
-            [qty, invRecord.id, adminId]
-        );
 
         // Insert wholesale sale record
         const result = await client.query(

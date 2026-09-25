@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const { formatQty } = require('../utils/quantity');
 
 // Get all medicines with current stock, strictly isolated by tenant admin_id
 exports.getInventory = async (req, res) => {
@@ -40,11 +41,16 @@ exports.getInventory = async (req, res) => {
                 COALESCE(m.schedule, 'NONE') AS schedule,
                 m.hsn_code,
                 m.pack_size,
+                COALESCE(m.units_per_strip, 1) AS units_per_strip,
                 m.admin_id,
                 COALESCE(SUM(i.stock_qty), 0) as total_stock,
                 COALESCE(
+                    (SELECT selling_price FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
+                    COALESCE(MAX(i.selling_price), MAX(i.mrp), 0)
+                ) as selling_price,
+                COALESCE(
                     (SELECT mrp FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
-                    COALESCE(MAX(i.mrp), 0)
+                    COALESCE(MAX(i.mrp), MAX(i.selling_price), 0)
                 ) as mrp,
                 COALESCE(
                     (SELECT purchase_price FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
@@ -60,7 +66,11 @@ exports.getInventory = async (req, res) => {
             ORDER BY COALESCE(m.medicine_name, m.name);
         `;
         const result = await pool.query(query, params);
-        res.json(result.rows);
+        const rows = result.rows.map(r => ({
+            ...r,
+            formatted_stock: formatQty(r.total_stock, r.units_per_strip)
+        }));
+        res.json(rows);
     } catch (error) {
         console.error('Error in getInventory:', error.message);
         res.status(500).json({ error: 'Failed to fetch inventory' });
@@ -83,7 +93,8 @@ exports.addMedicine = async (req, res) => {
         description,
         schedule,
         hsn_code,
-        pack_size
+        pack_size,
+        units_per_strip
     } = req.body;
 
     const medName = medicine_name || name;
@@ -93,20 +104,22 @@ exports.addMedicine = async (req, res) => {
     if (!validSchedules.includes(medSchedule)) {
         medSchedule = 'NONE';
     }
+    const unitsPerStrip = Math.max(1, parseInt(units_per_strip, 10) || 1);
 
     try {
         const result = await pool.query(
             `INSERT INTO MEDICINES (
                 medicine_name, name, brand_name, salt_composition, 
                 medicine_category, category, dosage_form, strength, 
-                barcode, description, schedule, hsn_code, pack_size, admin_id
+                barcode, description, schedule, hsn_code, pack_size, units_per_strip, admin_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *`,
             [
                 medName, medName, brand_name, salt_composition,
                 medCategory, medCategory, dosage_form, strength,
                 barcode || null, description, medSchedule, hsn_code || '3004', pack_size || '1',
+                unitsPerStrip,
                 adminId
             ]
         );
@@ -178,7 +191,8 @@ exports.updateMedicine = async (req, res) => {
         description,
         schedule,
         hsn_code,
-        pack_size
+        pack_size,
+        units_per_strip
     } = req.body;
 
     const medName = medicine_name || name;
@@ -188,8 +202,33 @@ exports.updateMedicine = async (req, res) => {
     if (medSchedule && !validSchedules.includes(medSchedule)) {
         return res.status(400).json({ error: `Invalid schedule: '${schedule}'. Allowed values: ${validSchedules.join(', ')}` });
     }
+    const parsedUnitsPerStrip = units_per_strip !== undefined && units_per_strip !== null
+        ? Math.max(1, parseInt(units_per_strip, 10) || 1)
+        : null;
 
     try {
+        if (parsedUnitsPerStrip !== null) {
+            const currentMed = await pool.query(
+                'SELECT units_per_strip FROM MEDICINES WHERE id = $1 AND admin_id = $2',
+                [id, adminId]
+            );
+            if (currentMed.rows.length > 0) {
+                const currentUPS = parseInt(currentMed.rows[0].units_per_strip, 10) || 1;
+                if (currentUPS !== parsedUnitsPerStrip) {
+                    const stockCheck = await pool.query(
+                        'SELECT COALESCE(SUM(stock_qty), 0) as total_stock FROM INVENTORY WHERE medicine_id = $1 AND admin_id = $2',
+                        [id, adminId]
+                    );
+                    const currentStock = parseInt(stockCheck.rows[0]?.total_stock, 10) || 0;
+                    if (currentStock > 0 && req.body.confirm_pack_size_change !== true) {
+                        return res.status(400).json({
+                            error: `Cannot change pack size from ${currentUPS} to ${parsedUnitsPerStrip} because medicine has active stock (${currentStock} units). Please confirm by setting confirm_pack_size_change: true.`
+                        });
+                    }
+                }
+            }
+        }
+
         const result = await pool.query(
             `UPDATE MEDICINES SET 
                 medicine_name=$1, name=$2, brand_name=$3, salt_composition=$4, 
@@ -197,18 +236,33 @@ exports.updateMedicine = async (req, res) => {
                 barcode=$9, description=$10,
                 schedule=COALESCE($11, schedule),
                 hsn_code=COALESCE($12, hsn_code),
-                pack_size=COALESCE($13, pack_size)
-             WHERE id=$14 AND admin_id=$15 RETURNING *`,
+                pack_size=COALESCE($13, pack_size),
+                units_per_strip=COALESCE($14, units_per_strip)
+             WHERE id=$15 AND admin_id=$16 RETURNING *`,
             [
                 medName, medName, brand_name, salt_composition,
                 medCategory, medCategory, dosage_form, strength,
                 barcode, description, medSchedule || null, hsn_code || null,
-                pack_size || null, id, adminId
+                pack_size || null, parsedUnitsPerStrip, id, adminId
             ]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Medicine not found' });
         }
+
+        const rawSellingPrice = req.body.selling_price !== undefined ? req.body.selling_price : req.body.mrp;
+        if (rawSellingPrice !== undefined && rawSellingPrice !== null && rawSellingPrice !== '') {
+            const parsedSellingPrice = parseFloat(rawSellingPrice);
+            if (!isNaN(parsedSellingPrice) && parsedSellingPrice >= 0) {
+                await pool.query(
+                    `UPDATE INVENTORY 
+                     SET selling_price = $1, mrp = $1 
+                     WHERE medicine_id = $2 AND admin_id = $3`,
+                    [parsedSellingPrice, id, adminId]
+                );
+            }
+        }
+
         res.json(result.rows[0]);
     } catch (error) {
         console.error('Error in updateMedicine:', error.message);
@@ -246,9 +300,13 @@ exports.getAlerts = async (req, res) => {
             SELECT 
                 COALESCE(m.medicine_name, m.name) AS name,
                 COALESCE(m.medicine_name, m.name) AS medicine_name,
+                COALESCE(m.units_per_strip, 1) AS units_per_strip,
                 i.batch_number, 
                 i.stock_qty, 
-                i.expiry_date
+                i.expiry_date,
+                COALESCE(i.selling_price, i.mrp, 0) as selling_price,
+                i.mrp,
+                i.purchase_price
             FROM INVENTORY i
             JOIN MEDICINES m ON i.medicine_id = m.id
             WHERE i.admin_id = $1 
@@ -256,7 +314,11 @@ exports.getAlerts = async (req, res) => {
             ORDER BY i.expiry_date ASC
         `;
         const result = await pool.query(query, [adminId]);
-        res.json(result.rows);
+        const rows = result.rows.map(r => ({
+            ...r,
+            formatted_stock: formatQty(r.stock_qty, r.units_per_strip)
+        }));
+        res.json(rows);
     } catch (error) {
         console.error('Error in getAlerts:', error.message);
         res.status(500).json({ error: 'Failed to fetch alerts' });

@@ -168,6 +168,7 @@ async function setupSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
       ALTER TABLE MEDICINES ADD COLUMN IF NOT EXISTS admin_id INTEGER;
+      ALTER TABLE MEDICINES ADD COLUMN IF NOT EXISTS units_per_strip INTEGER DEFAULT 1;
 
       CREATE TABLE IF NOT EXISTS INVENTORY (
         id SERIAL PRIMARY KEY,
@@ -175,17 +176,19 @@ async function setupSchema() {
         medicine_id INT REFERENCES MEDICINES(id) ON DELETE CASCADE,
         supplier_id INT REFERENCES SUPPLIERS(id) ON DELETE SET NULL,
         batch_number VARCHAR(50) NOT NULL,
-        stock_qty INT NOT NULL DEFAULT 0,
+        stock_qty INT NOT NULL DEFAULT 0 CHECK (stock_qty >= 0),
         expiry_date DATE NOT NULL,
         purchase_price DECIMAL(10,2) NOT NULL,
         mrp DECIMAL(10,2) NOT NULL,
         tax_percentage DECIMAL(5,2) DEFAULT 0.00,
         trade_rate DECIMAL(10,2),
         old_mrp DECIMAL(10,2) DEFAULT 0,
+        selling_price DECIMAL(10,2) NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(medicine_id, batch_number)
       );
       ALTER TABLE INVENTORY ADD COLUMN IF NOT EXISTS admin_id INTEGER;
+      ALTER TABLE INVENTORY ADD COLUMN IF NOT EXISTS selling_price DECIMAL(10,2) NOT NULL DEFAULT 0;
 
       CREATE TABLE IF NOT EXISTS PURCHASES (
         id SERIAL PRIMARY KEY,
@@ -204,8 +207,16 @@ async function setupSchema() {
         batch_number VARCHAR(50) NOT NULL,
         qty INT NOT NULL,
         price DECIMAL(10,2) NOT NULL,
-        tax DECIMAL(10,2) NOT NULL DEFAULT 0
+        tax DECIMAL(10,2) NOT NULL DEFAULT 0,
+        units_per_strip INTEGER DEFAULT 1,
+        strips_qty NUMERIC(10,2) DEFAULT 0,
+        loose_qty INTEGER DEFAULT 0,
+        selling_price DECIMAL(10,2) NOT NULL DEFAULT 0
       );
+      ALTER TABLE PURCHASE_ITEMS ADD COLUMN IF NOT EXISTS units_per_strip INTEGER DEFAULT 1;
+      ALTER TABLE PURCHASE_ITEMS ADD COLUMN IF NOT EXISTS strips_qty NUMERIC(10,2) DEFAULT 0;
+      ALTER TABLE PURCHASE_ITEMS ADD COLUMN IF NOT EXISTS loose_qty INTEGER DEFAULT 0;
+      ALTER TABLE PURCHASE_ITEMS ADD COLUMN IF NOT EXISTS selling_price DECIMAL(10,2) NOT NULL DEFAULT 0;
 
       CREATE TABLE IF NOT EXISTS SALES (
         id SERIAL PRIMARY KEY,
@@ -243,8 +254,14 @@ async function setupSchema() {
         net_total DECIMAL(10,2),
         old_mrp DECIMAL(10,2) DEFAULT 0,
         hsn_code VARCHAR(20) DEFAULT '3004',
-        pack VARCHAR(20) DEFAULT '1'
+        pack VARCHAR(20) DEFAULT '1',
+        units_per_strip INTEGER DEFAULT 1,
+        strips_qty NUMERIC(10,2) DEFAULT 0,
+        loose_qty INTEGER DEFAULT 0
       );
+      ALTER TABLE SALE_ITEMS ADD COLUMN IF NOT EXISTS units_per_strip INTEGER DEFAULT 1;
+      ALTER TABLE SALE_ITEMS ADD COLUMN IF NOT EXISTS strips_qty NUMERIC(10,2) DEFAULT 0;
+      ALTER TABLE SALE_ITEMS ADD COLUMN IF NOT EXISTS loose_qty INTEGER DEFAULT 0;
 
       CREATE TABLE IF NOT EXISTS WHOLESALE_SALES (
         id SERIAL PRIMARY KEY,

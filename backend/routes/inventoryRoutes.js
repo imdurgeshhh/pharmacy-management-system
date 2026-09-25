@@ -30,6 +30,8 @@ router.get('/', inventoryController.getInventory);
 router.get('/alerts', inventoryController.getAlerts);
 router.get('/medicine/:id/batches', validate([positiveIntId('id')]), inventoryController.getMedicineBatches);
 router.get('/medicine/:id', validate([positiveIntId('id')]), inventoryController.getMedicineById);
+router.post('/medicine', medicineSchema, validateSchedule, inventoryController.addMedicine);
+router.post('/', medicineSchema, validateSchedule, inventoryController.addMedicine);
 router.put('/medicine/:id', validate([positiveIntId('id')]), validateSchedule, inventoryController.updateMedicine);
 router.delete('/medicine/:id', adminOnly, validate([positiveIntId('id')]), inventoryController.deleteMedicine);
 router.get('/:id', validate([positiveIntId('id')]), inventoryController.getMedicineById);

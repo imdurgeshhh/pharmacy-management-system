@@ -154,6 +154,54 @@ test('Module: inventory', async (t) => {
     assert.ok(res.body.error);
   });
 
+  await t.test('POST /inventory/medicine: creating a new medicine with units_per_strip succeeds', async () => {
+    auth.asAdmin();
+    const res = await request(app)
+      .post('/api/inventory/medicine')
+      .send({
+        name: `PackSizeNew-${Date.now()}`,
+        schedule: 'NONE',
+        units_per_strip: 10
+      })
+      .expect(201);
+    assert.equal(res.body.units_per_strip, 10);
+  });
+
+  await t.test('PUT /inventory/medicine/:id: editing medicine WITHOUT stock to change units_per_strip is allowed', async () => {
+    auth.asAdmin();
+    const med = await createMedicine({ units_per_strip: 10 });
+    const res = await request(app)
+      .put(`/api/inventory/medicine/${med.id}`)
+      .send({
+        medicine_name: med.name,
+        units_per_strip: 15
+      })
+      .expect(200);
+    assert.equal(res.body.units_per_strip, 15);
+  });
+
+  await t.test('PUT /inventory/medicine/:id: editing medicine WITH active stock to change units_per_strip is blocked with error', async () => {
+    auth.asAdmin();
+    const med = await createMedicine({ units_per_strip: 10 });
+    const supp = await createSupplier();
+    await createInventoryBatch({ medicine_id: med.id, supplier_id: supp.id, stock_qty: 25 });
+
+    const res = await request(app)
+      .put(`/api/inventory/medicine/${med.id}`)
+      .send({
+        medicine_name: med.name,
+        units_per_strip: 20
+      })
+      .expect(400);
+
+    assert.ok(res.body.error, 'Must return error object');
+    assert.ok(
+      res.body.error.toLowerCase().includes('active stock') ||
+      res.body.error.toLowerCase().includes('confirm_pack_size_change'),
+      'Error message must clearly explain that active stock prevents changing units_per_strip'
+    );
+  });
+
   // ── DELETE /medicine/:id ──────────────────────────────────────────────────
   await t.test('[contract] DELETE /inventory/medicine/:id — admin → 200', async () => {
     const med = await createMedicine();

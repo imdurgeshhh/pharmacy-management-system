@@ -6,6 +6,7 @@ import { Edit2, Trash2, Package, X, Save, Search, RotateCcw } from 'lucide-react
 import Modal from '../components/common/Modal';
 import FormField from '../components/common/FormField';
 import ConfirmModal from '../components/common/ConfirmModal';
+import { formatQty } from '../utils/quantity';
 
 const SCHEDULE_CONFIG = {
     NONE: {
@@ -54,7 +55,8 @@ const DEFAULT_FORM_DATA = {
     strength: '',
     barcode: '',
     description: '',
-    schedule: 'NONE'
+    schedule: 'NONE',
+    units_per_strip: 1
 };
 
 const Inventory = () => {
@@ -135,7 +137,8 @@ const Inventory = () => {
             strength: item.strength || '',
             barcode: item.barcode || '',
             description: item.description || '',
-            schedule: item.schedule || 'NONE'
+            schedule: item.schedule || 'NONE',
+            units_per_strip: item.units_per_strip || 1
         });
         setErrorMsg(null);
         setShowModal(true);
@@ -345,7 +348,7 @@ const Inventory = () => {
                                                         ? 'bg-orange-500/10 text-orange-700 border-orange-500/20'
                                                         : 'bg-[rgb(var(--color-primary))]/10 text-[rgb(var(--color-primary))] border-[rgb(var(--color-primary))]/20'
                                                 }`}>
-                                                    {item.total_stock} <span>Units</span>
+                                                    {item.formatted_stock || formatQty(item.total_stock, item.units_per_strip)}
                                                 </span>
                                             </td>
                                             <td className="p-4 flex justify-center items-center gap-2">
@@ -481,6 +484,20 @@ const Inventory = () => {
                                 placeholder="e.g. 1234567890…"
                                 value={formData.barcode}
                                 onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                            />
+                            <FormField
+                                label="Units per Strip"
+                                type="number"
+                                min="1"
+                                name="units_per_strip"
+                                placeholder="10"
+                                value={formData.units_per_strip}
+                                disabled={Boolean(editingItem && Number(editingItem.total_stock) > 0)}
+                                onChange={(e) => setFormData({ ...formData, units_per_strip: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                                hint={Boolean(editingItem && Number(editingItem.total_stock) > 0)
+                                    ? `Locked: Medicine has active stock (${editingItem.total_stock} units). Pack size can only be changed when stock is 0.`
+                                    : "Tablets/capsules per strip (e.g. 10 or 15). Keep 1 for syrups or bottles."
+                                }
                             />
                         </div>
                     </fieldset>

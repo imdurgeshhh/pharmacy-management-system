@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getShopProfile } from '../config/shop';
 import { numberToWords } from './numberToWords';
+import { formatQty } from './quantity';
 
 const fmt = (n) => `Rs. ${(Number(n) || 0).toFixed(2)}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -114,18 +115,24 @@ export function generateInvoicePDF(
   autoTable(doc, {
     startY: tableY,
     head: [['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt']],
-    body: rows.map((r, i) => [
-      i + 1,
-      r.name || r.particulars || r.medicine_name || 'Medicine',
-      r.hsn_code || r.hsn || '3004',
-      r.qty,
-      fmt(r.mrp),
-      `${r.disc_pct || 0}%`,
-      fmt(r.disc_amt),
-      `${r.gst_pct || 0}%`,
-      fmt(r.tax_amt),
-      fmt(r.net_amt)
-    ]),
+    body: rows.map((r, i) => {
+      const ups = parseInt(r.units_per_strip, 10) || 1;
+      const totalUnits = parseInt(r.qty, 10) || 0;
+      const nameDesc = r.name || r.particulars || r.medicine_name || 'Medicine';
+      const qtyStr = ups > 1 ? formatQty(totalUnits, ups) : r.qty;
+      return [
+        i + 1,
+        nameDesc,
+        r.hsn_code || r.hsn || '3004',
+        qtyStr,
+        fmt(r.selling_price || r.mrp),
+        `${r.disc_pct || 0}%`,
+        fmt(r.disc_amt),
+        `${r.gst_pct || 0}%`,
+        fmt(r.tax_amt),
+        fmt(r.net_amt)
+      ];
+    }),
     headStyles: { fillColor: [46, 125, 50], textColor: 255, fontSize: 7, fontStyle: 'bold' },
     bodyStyles: { fontSize: 7.5 },
     alternateRowStyles: { fillColor: [240, 255, 240] },

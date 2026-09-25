@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ClipboardList, Edit3, Trash2, Save } from 'lucide-react';
 import ConfirmModal from '../common/ConfirmModal';
 import { SCHEDULE_CONFIG } from '../../utils/scheduleConfig';
+import { formatQty } from '../../utils/quantity';
 
 const defaultRupee = (n) => `₹${(Number(n) || 0).toFixed(2)}`;
 
@@ -45,10 +46,10 @@ const PurchaseItemsTable = ({
       ) : (
         <>
           <div className="overflow-x-auto no-scrollbar" tabIndex={0} role="region" aria-label="Stock entry list">
-            <table className="w-full text-xs text-left" style={{ minWidth: 950 }}>
+            <table className="w-full text-xs text-left" style={{ minWidth: 1020 }}>
               <thead className="bg-green-50 border-b border-green-100 text-green-950 uppercase tracking-wider font-bold">
                 <tr>
-                  {['#', 'Medicine', 'Schedule', 'Batch', 'Expiry', 'Qty', 'Price', 'GST%', 'Tax', 'Disc%', 'Disc', 'Final', 'Actions'].map(h => (
+                  {['#', 'Medicine', 'Schedule', 'Batch', 'Expiry', 'Qty', 'Cost Price', 'Selling Price', 'GST%', 'Tax', 'Disc%', 'Disc', 'Final', 'Actions'].map(h => (
                     <th key={h} scope="col" className="px-3 py-3 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -56,6 +57,7 @@ const PurchaseItemsTable = ({
               <tbody className="divide-y divide-green-50">
                 {entries.map((e, i) => (
                   <tr key={i} className={`transition-colors ${editIdx === i ? 'bg-amber-50' : 'hover:bg-green-50/40'}`}>
+                    <td className="px-3 py-2.5 font-bold text-gray-500 tabular-nums">{i + 1}</td>
                     <td className="px-3 py-2.5 max-w-[160px] truncate" title={e.medicine_name}>
                       <span className="font-semibold text-gray-800 block truncate">{e.medicine_name}</span>
                       {(e.brand_name || e.strength || e.dosage_form) && (
@@ -85,8 +87,16 @@ const PurchaseItemsTable = ({
                         ? new Date(e.expiry_date + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
                         : '—'}
                     </td>
-                    <td className="px-3 py-2.5 text-center font-bold text-gray-800 tabular-nums">{e.qty}</td>
+                    <td className="px-3 py-2.5 text-center font-bold text-gray-800 tabular-nums">
+                      <div>{e.qty}</div>
+                      {parseInt(e.units_per_strip, 10) > 1 && (
+                        <div className="text-[10px] text-green-700 font-medium">
+                          {formatQty(e.qty, e.units_per_strip)}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 font-mono text-gray-700 tabular-nums">{rupee(e.price)}</td>
+                    <td className="px-3 py-2.5 font-mono text-green-700 font-semibold tabular-nums">{rupee(e.selling_price !== undefined ? e.selling_price : (e.mrp || e.price))}</td>
                     <td className="px-3 py-2.5 text-center">
                       <span className="bg-orange-50 text-orange-700 border border-orange-100 rounded-md px-1.5 py-0.5 font-semibold tabular-nums">{e.gst_pct}%</span>
                     </td>

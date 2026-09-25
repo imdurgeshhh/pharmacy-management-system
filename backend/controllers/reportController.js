@@ -12,7 +12,10 @@ exports.getDashboardStats = async (req, res) => {
             [adminId]
         );
         const inventoryValueRes = await pool.query(
-            'SELECT COALESCE(SUM(stock_qty * purchase_price), 0) as total FROM INVENTORY WHERE admin_id = $1',
+            `SELECT COALESCE(SUM(i.stock_qty * (i.purchase_price / COALESCE(NULLIF(m.units_per_strip, 0), 1))), 0) as total 
+             FROM INVENTORY i
+             LEFT JOIN MEDICINES m ON i.medicine_id = m.id
+             WHERE i.admin_id = $1`,
             [adminId]
         );
         const lowStockCountRes = await pool.query(

@@ -152,8 +152,8 @@ const MedicinePicker = ({
               >
                 <span className="truncate">{m.label}</span>
                 <span className="flex-shrink-0 flex flex-col items-end">
-                  {m.mrp > 0 && (
-                    <span className="text-green-800 font-bold tabular-nums">{fmt(m.mrp)}</span>
+                  {((m.selling_price || m.mrp) > 0) && (
+                    <span className="text-green-800 font-bold tabular-nums">{fmt(m.selling_price || m.mrp)}</span>
                   )}
                   {m.stock_qty !== undefined && (
                     <span className="text-gray-600 text-[10px] font-medium tabular-nums">Qty: {m.stock_qty}</span>
