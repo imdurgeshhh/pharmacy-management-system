@@ -185,4 +185,63 @@ describe('Integration: POS Flow (MedicinePicker -> Table -> Checkout API)', () =
     expect(salesPayload.items[0].strips_qty).toBe(2);
     expect(salesPayload.items[0].units_per_strip).toBe(10);
   });
+
+  it('maintains non-overlapping two-column layout with independent scroll containers and supports multiple rows and format toggles', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<POS />);
+
+    // 1. Verify parent layout container classes
+    const layoutContainer = container.querySelector('div.flex.flex-col.xl\\:flex-row.items-start');
+    expect(layoutContainer).toBeInTheDocument();
+    expect(layoutContainer.className).toContain('min-w-0');
+    expect(layoutContainer.className).toContain('items-start');
+
+    // 2. Verify left column has flex-1 and min-w-0
+    const leftPanel = layoutContainer.firstElementChild;
+    expect(leftPanel.className).toContain('flex-1');
+    expect(leftPanel.className).toContain('min-w-0');
+
+    // 3. Verify medicine table has horizontal scroll container with min-w-0
+    const tableRegion = screen.getByRole('region', { name: /medicine items list/i });
+    expect(tableRegion.className).toContain('overflow-x-auto');
+    expect(tableRegion.className).toContain('min-w-0');
+
+    // 4. Verify right summary panel has aside, sticky positioning, shrink-0 and independent scroll
+    const aside = screen.getByRole('complementary', { name: /bill summary and checkout/i });
+    expect(aside).toBeInTheDocument();
+    expect(aside.className).toContain('xl:w-80');
+    expect(aside.className).toContain('shrink-0');
+    expect(aside.className).toContain('xl:sticky');
+    expect(aside.className).toContain('xl:top-4');
+    expect(aside.className).toContain('self-start');
+
+    const summaryCard = aside.firstElementChild;
+    expect(summaryCard.className).toContain('max-h-[calc(100vh-2rem)]');
+    const scrollableBody = summaryCard.querySelector('.overflow-y-auto');
+    expect(scrollableBody).toBeInTheDocument();
+
+    // 5. Test adding multiple rows via "Add Row"
+    const addRowBtn = screen.getByRole('button', { name: /add medicine row/i });
+    await user.click(addRowBtn);
+    await user.click(addRowBtn);
+    await user.click(addRowBtn);
+
+    const rows = screen.getAllByRole('row');
+    // Header row + 4 data rows = 5 rows
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+
+    // Confirm sidebar remains structurally intact and separate
+    expect(screen.getByRole('complementary', { name: /bill summary and checkout/i })).toBeInTheDocument();
+
+    // 6. Test switching between Customer Bill and Wholesale Bill
+    const wholesaleRadio = screen.getByRole('radio', { name: /wholesale bill/i });
+    await user.click(wholesaleRadio);
+    expect(wholesaleRadio).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('heading', { name: /wholesale billing/i })).toBeInTheDocument();
+
+    const customerRadio = screen.getByRole('radio', { name: /customer bill/i });
+    await user.click(customerRadio);
+    expect(customerRadio).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('heading', { name: /customer billing/i })).toBeInTheDocument();
+  });
 });

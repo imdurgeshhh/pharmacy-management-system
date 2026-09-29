@@ -367,10 +367,10 @@ export default function POS() {
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col xl:flex-row gap-5 animate-fade-in relative z-10 lg:pl-4 pb-10">
+    <div className="flex flex-col xl:flex-row items-start gap-6 animate-fade-in relative z-10 pb-10 w-full min-w-0">
 
       {/* ══════════════════ LEFT PANEL ══════════════════ */}
-      <div className="flex-1 flex flex-col gap-5 min-w-0">
+      <div className="flex-1 flex flex-col gap-5 min-w-0 w-full">
 
         {/* Page Title & Bill Format Toggle */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -419,7 +419,7 @@ export default function POS() {
         </div>
 
         {/* ─── Customer Details (compact) ─── */}
-        <fieldset className="bg-white rounded-2xl border border-green-100 shadow-md overflow-hidden">
+        <fieldset className="bg-white rounded-2xl border border-green-100 shadow-md overflow-hidden w-full min-w-0">
           <legend className="w-full block p-0 m-0">
             <div className="px-5 py-3 bg-gradient-to-r from-green-900 to-green-800 flex items-center gap-2">
               <User size={15} className="text-green-200" aria-hidden="true" />
@@ -485,7 +485,7 @@ export default function POS() {
         </fieldset>
 
         {/* ─── Medicine Bill Table ─── */}
-        <fieldset className="bg-white rounded-2xl border border-green-100 shadow-md overflow-hidden flex-1">
+        <fieldset className="bg-white rounded-2xl border border-green-100 shadow-md overflow-hidden flex-1 w-full min-w-0 block">
           <legend className="w-full block p-0 m-0">
             <div className="px-5 py-3 bg-gradient-to-r from-green-900 to-green-800 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -502,8 +502,8 @@ export default function POS() {
             </div>
           </legend>
 
-          <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Medicine items list">
-            <table className="w-full text-xs" style={{ minWidth: 880 }}>
+          <div className="overflow-x-auto w-full min-w-0" tabIndex={0} role="region" aria-label="Medicine items list">
+            <table className="w-full text-xs text-left" style={{ minWidth: 880 }}>
               <thead className="bg-green-50 border-b border-green-100 text-green-950 uppercase tracking-wider font-bold">
                 <tr>
                   <th id="th-pos-med" scope="col" className="px-3 py-2.5 text-left font-bold min-w-[170px] text-green-950">Medicine</th>
@@ -785,16 +785,16 @@ export default function POS() {
       </div>
 
       {/* ══════════════════ RIGHT PANEL — Live Summary ══════════════════ */}
-      <div className="w-full xl:w-80 flex flex-col gap-4 shrink-0">
+      <aside aria-label="Bill Summary and Checkout" className="w-full xl:w-80 shrink-0 xl:sticky xl:top-4 self-start">
 
-        {/* Summary card */}
-        <div className="bg-white rounded-2xl border border-green-100 shadow-md overflow-hidden sticky top-4">
-          <div className="px-5 py-3 bg-gradient-to-r from-green-900 to-green-800 flex items-center gap-2">
+        {/* Summary card with independent vertical scroll and fixed height containment */}
+        <div className="bg-white rounded-2xl border border-green-100 shadow-md overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]">
+          <div className="px-5 py-3 bg-gradient-to-r from-green-900 to-green-800 flex items-center gap-2 shrink-0">
             <FileText size={15} className="text-green-200" aria-hidden="true" />
             <h2 className="text-sm font-bold text-white text-balance">Bill Summary</h2>
           </div>
 
-          <div className="p-5 space-y-5">
+          <div className="p-5 space-y-5 overflow-y-auto flex-1">
 
             {/* Totals */}
             <div className="space-y-2">
@@ -923,7 +923,7 @@ export default function POS() {
 
           </div>
         </div>
-      </div>
+      </aside>
 
       {/* Clear Confirmation Modal */}
       <ConfirmModal

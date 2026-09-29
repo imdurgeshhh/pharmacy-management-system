@@ -190,5 +190,71 @@ test.describe('POS – Point of Sale', () => {
     expect(pdfContent).toContain('HSN');
     expect(pdfContent).toContain('Net Amt');
   });
+
+  // ── Layout Non-Overlap & Responsive Containment ───────────────────────────
+
+  test('Medicine Bill table and Bill Summary panel do not overlap across multiple rows, viewport resizing, and format toggle', async ({ page }) => {
+    // 1. Desktop viewport (1440x900) - Side-by-side verification
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    const tableSection = page.getByRole('region', { name: /medicine items list/i });
+    const summaryPanel = page.getByRole('complementary', { name: /bill summary and checkout/i });
+
+    await expect(tableSection).toBeVisible();
+    await expect(summaryPanel).toBeVisible();
+
+    let tableBox = await tableSection.boundingBox();
+    let summaryBox = await summaryPanel.boundingBox();
+
+    expect(tableBox).not.toBeNull();
+    expect(summaryBox).not.toBeNull();
+
+    // On desktop, summary panel must sit strictly to the right of the medicine table without collision
+    expect(summaryBox.x).toBeGreaterThanOrEqual(tableBox.x + tableBox.width - 2);
+
+    // 2. Add multiple rows and verify table grows downward without shifting or colliding into the summary panel
+    const addRowBtn = page.getByRole('button', { name: /add medicine row/i });
+    for (let i = 0; i < 5; i++) {
+      await addRowBtn.click();
+    }
+
+    const rows = page.locator('tbody tr');
+    await expect(rows).toHaveCount(6);
+
+    const newTableBox = await tableSection.boundingBox();
+    const newSummaryBox = await summaryPanel.boundingBox();
+
+    // Table height grew downward
+    expect(newTableBox.height).toBeGreaterThan(tableBox.height);
+    // Summary panel position x remains strictly to the right without overlap
+    expect(newSummaryBox.x).toBeGreaterThanOrEqual(newTableBox.x + newTableBox.width - 2);
+
+    // 3. Responsive stacking on smaller screen widths (e.g. tablet/mobile 768x1024)
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await page.waitForTimeout(300);
+
+    const mobileTableBox = await tableSection.boundingBox();
+    const mobileSummaryBox = await summaryPanel.boundingBox();
+
+    // In stacked mode, summary panel appears below the medicine bill section
+    expect(mobileSummaryBox.y).toBeGreaterThanOrEqual(mobileTableBox.y + mobileTableBox.height - 20);
+
+    // 4. Switching format keeps layout consistent
+    const customerBillRadio = page.getByRole('radio', { name: /customer bill/i });
+    await customerBillRadio.click();
+    await expect(customerBillRadio).toHaveAttribute('aria-checked', 'true');
+
+    const wholesaleBillRadio = page.getByRole('radio', { name: /wholesale bill/i });
+    await wholesaleBillRadio.click();
+    await expect(wholesaleBillRadio).toHaveAttribute('aria-checked', 'true');
+
+    // Return to desktop viewport to confirm recovery to clean side-by-side layout
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(300);
+
+    const restoredTableBox = await tableSection.boundingBox();
+    const restoredSummaryBox = await summaryPanel.boundingBox();
+    expect(restoredSummaryBox.x).toBeGreaterThanOrEqual(restoredTableBox.x + restoredTableBox.width - 2);
+  });
 });
 
