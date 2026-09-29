@@ -80,12 +80,14 @@ exports.createPurchase = async (req, res) => {
     const { supplier_id, total_amount, tax_amount, items } = req.body;
 
     if (!items || items.length === 0) {
+        console.warn('[Purchases 400] No items provided');
         return res.status(400).json({ error: 'No items provided' });
     }
 
     const resolvedSupplierId = parseInt(supplier_id, 10);
     if (!resolvedSupplierId) {
-        return res.status(400).json({ error: 'supplier_id is required' });
+        console.warn(`[Purchases 400] supplier_id is required, received: ${supplier_id}`);
+        return res.status(400).json({ error: 'supplier_id is required. Please select a supplier.' });
     }
 
     const client = await pool.connect();
@@ -99,6 +101,7 @@ exports.createPurchase = async (req, res) => {
         );
         if (suppCheck.rows.length === 0) {
             await client.query('ROLLBACK');
+            console.warn(`[Purchases 400] Supplier ${resolvedSupplierId} not found for admin ${adminId}`);
             return res.status(400).json({ error: 'Supplier not found' });
         }
 
@@ -123,29 +126,29 @@ exports.createPurchase = async (req, res) => {
                     [medicineId, adminId]
                 );
                 if (medOwnerCheck.rows.length === 0) {
-                    const err = new Error('Invalid medicine ID');
-                    err.statusCode = 400;
-                    throw err;
-                }
+                    // Fall back to finding or creating by name within this tenant
+                    const medName = item.name || item.medicine_name;
+                    medicineId = await findOrCreateMedicine(client, medName, item.schedule, adminId, item);
+                } else {
+                    const brandName = (item.brand_name || item.brand || '').trim() || null;
+                    const saltComp = (item.salt_composition || item.salt || '').trim() || null;
+                    const category = (item.category || item.medicine_category || '').trim() || null;
+                    const dosageForm = (item.dosage_form || item.form || '').trim() || null;
+                    const strength = (item.strength || '').trim() || null;
 
-                const brandName = (item.brand_name || item.brand || '').trim() || null;
-                const saltComp = (item.salt_composition || item.salt || '').trim() || null;
-                const category = (item.category || item.medicine_category || '').trim() || null;
-                const dosageForm = (item.dosage_form || item.form || '').trim() || null;
-                const strength = (item.strength || '').trim() || null;
-
-                if (brandName || saltComp || category || dosageForm || strength) {
-                    await client.query(
-                        `UPDATE medicines SET
-                            brand_name = COALESCE(NULLIF($1, ''), brand_name),
-                            salt_composition = COALESCE(NULLIF($2, ''), salt_composition),
-                            category = COALESCE(NULLIF($3, ''), category),
-                            medicine_category = COALESCE(NULLIF($3, ''), medicine_category),
-                            dosage_form = COALESCE(NULLIF($4, ''), dosage_form),
-                            strength = COALESCE(NULLIF($5, ''), strength)
-                         WHERE id = $6 AND admin_id = $7`,
-                        [brandName, saltComp, category, dosageForm, strength, medicineId, adminId]
-                    );
+                    if (brandName || saltComp || category || dosageForm || strength) {
+                        await client.query(
+                            `UPDATE medicines SET
+                                brand_name = COALESCE(NULLIF($1, ''), brand_name),
+                                salt_composition = COALESCE(NULLIF($2, ''), salt_composition),
+                                category = COALESCE(NULLIF($3, ''), category),
+                                medicine_category = COALESCE(NULLIF($3, ''), medicine_category),
+                                dosage_form = COALESCE(NULLIF($4, ''), dosage_form),
+                                strength = COALESCE(NULLIF($5, ''), strength)
+                             WHERE id = $6 AND admin_id = $7`,
+                            [brandName, saltComp, category, dosageForm, strength, medicineId, adminId]
+                        );
+                    }
                 }
             }
 
@@ -187,6 +190,7 @@ exports.createPurchase = async (req, res) => {
 
             if (isNaN(totalUnits) || totalUnits <= 0) {
                 const medDisplayName = item.medicine_name || item.name || batchNumber;
+                console.warn(`[Purchases 400] Invalid quantity for item: ${medDisplayName}, totalUnits: ${totalUnits}`);
                 const err = new Error(`Invalid quantity for item: ${medDisplayName}`);
                 err.statusCode = 400;
                 throw err;
@@ -195,6 +199,7 @@ exports.createPurchase = async (req, res) => {
             const rawSellingPrice = item.selling_price !== undefined ? item.selling_price : item.mrp;
             const sellingPrice = parseFloat(rawSellingPrice !== undefined && rawSellingPrice !== '' ? rawSellingPrice : (purchasePrice > 0 ? +(purchasePrice * 1.25).toFixed(2) : 0));
             if (isNaN(sellingPrice) || sellingPrice < 0) {
+                console.warn(`[Purchases 400] Invalid selling_price for item: ${item.name || item.medicine_name || batchNumber}, received: ${rawSellingPrice}`);
                 const err = new Error(`selling_price must be a valid number >= 0 for item: ${item.name || item.medicine_name || batchNumber}`);
                 err.statusCode = 400;
                 throw err;
@@ -203,6 +208,7 @@ exports.createPurchase = async (req, res) => {
             const rawMrp = item.mrp !== undefined ? item.mrp : (item.selling_price !== undefined ? item.selling_price : undefined);
             const itemMrp = parseFloat(rawMrp !== undefined && rawMrp !== '' ? rawMrp : sellingPrice);
             if (isNaN(itemMrp) || itemMrp < 0) {
+                console.warn(`[Purchases 400] Invalid mrp for item: ${item.name || item.medicine_name || batchNumber}, received: ${rawMrp}`);
                 const err = new Error(`mrp must be a valid number >= 0 for item: ${item.name || item.medicine_name || batchNumber}`);
                 err.statusCode = 400;
                 throw err;

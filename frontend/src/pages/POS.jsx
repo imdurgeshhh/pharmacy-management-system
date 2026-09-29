@@ -11,7 +11,7 @@ import MedicinePicker from '../components/pos/MedicinePicker';
 import ConfirmModal from '../components/common/ConfirmModal';
 import { generateInvoicePDF } from '../utils/receiptPrinter';
 import { getShopProfile, mapStoreResponse } from '../config/shop';
-import { toTotalUnits, fromTotalUnits, normalizeQty, pricePerUnit, lineAmount, formatQty } from '../utils/quantity';
+import { toTotalUnits, fromTotalUnits, normalizeQty, pricePerUnit, lineAmount, formatQty, formatExpiryDate } from '../utils/quantity';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
@@ -22,16 +22,17 @@ const fmt = (n) => `₹${(Number(n) || 0).toFixed(2)}`;
 const billNo = () => `BILL-${Date.now().toString().slice(-6)}`;
 
 // ─── Row computation ──────────────────────────────────────────────────────────
-const computeRow = (r) => {
+const computeRow = (r, billType = 'customer') => {
   const mrp   = parseFloat(r.mrp)      || 0;
   const qty   = parseFloat(r.qty)      || 0;
   const ups   = parseInt(r.units_per_strip, 10) || 1;
   const gst   = parseFloat(r.gst_pct)  || 0;
   const disc  = parseFloat(r.disc_pct) || 0;
   const unitPrice = pricePerUnit(mrp, ups);
+
   const base     = +(qty * unitPrice).toFixed(2);
   const disc_amt = +(base * disc / 100).toFixed(2);
-  const tax_amt  = +(base * gst  / 100).toFixed(2);
+  const tax_amt  = gst > 0 ? +(base * gst / 100).toFixed(2) : 0;
   const net_amt  = +(base - disc_amt + tax_amt).toFixed(2);
   return { ...r, unitPrice, base, disc_amt, tax_amt, net_amt };
 };
@@ -49,8 +50,10 @@ const blankRow = () => ({
   units_per_strip: 1,
   unit_type: 'Strip',
   mrp: '',
-  gst_pct: 12,
+  selling_price: '',
+  gst_pct: 0,
   disc_pct: '',
+  expiry_date: '',
   editing: true
 });
 
@@ -78,7 +81,7 @@ export default function POS() {
           ? parseFloat(m.selling_price)
           : ((m.mrp !== undefined && m.mrp !== null && Number(m.mrp) > 0)
             ? parseFloat(m.mrp)
-            : (parseFloat(m.purchase_price) || 0));
+            : 0);
 
         return {
           id: m.id,
@@ -92,6 +95,7 @@ export default function POS() {
           units_per_strip: parseInt(m.units_per_strip, 10) || 1,
           unit_type: m.unit_type || 'Strip',
           pack_size: m.pack_size || '1',
+          expiry_date: m.expiry_date || null,
         };
       }).filter(m => m.label));
       setInventoryError('');
@@ -163,14 +167,20 @@ export default function POS() {
     const initialStrips = ups > 1 ? '1' : '';
     const initialLoose = ups > 1 ? '0' : '';
     const initialQty = ups > 1 ? ups : 1;
-    const priceVal = med.selling_price !== undefined && med.selling_price !== '' ? med.selling_price : (med.mrp || '');
+    const baseSellingPrice = parseFloat(med.selling_price) > 0
+      ? parseFloat(med.selling_price)
+      : (parseFloat(med.mrp) > 0 ? parseFloat(med.mrp) : 0);
+    // Print selling price as-is without pre-calculating GST into it.
+    // Default GST% to 0 for customer bill so selling price is charged directly unless GST% is chosen.
+    const initialGstPct = billType === 'customer' ? 0 : (parseFloat(med.tax_percentage) || 12);
 
     setRows(p => p.map((r, i) => i === idx ? {
       ...r,
       name: med.label,
-      mrp: String(priceVal),
-      selling_price: String(priceVal),
-      gst_pct: med.tax_percentage || 12,
+      mrp: String(baseSellingPrice || ''),
+      selling_price: String(baseSellingPrice || ''),
+      gst_pct: initialGstPct,
+      expiry_date: med.expiry_date || '',
       inventory_id: med.inventory_id,
       stock_qty: med.stock_qty,
       units_per_strip: ups,
@@ -188,14 +198,18 @@ export default function POS() {
       const initialStrips = ups > 1 ? '1' : '';
       const initialLoose = ups > 1 ? '0' : '';
       const initialQty = ups > 1 ? ups : 1;
-      const priceVal = matched.selling_price !== undefined && matched.selling_price !== '' ? matched.selling_price : (matched.mrp || '');
+      const baseSellingPrice = parseFloat(matched.selling_price) > 0
+        ? parseFloat(matched.selling_price)
+        : (parseFloat(matched.mrp) > 0 ? parseFloat(matched.mrp) : 0);
+      const initialGstPct = billType === 'customer' ? 0 : (parseFloat(matched.tax_percentage) || 12);
 
       setRows(p => p.map((r, i) => i === idx ? {
         ...r,
         name: value,
-        mrp: String(priceVal),
-        selling_price: String(priceVal),
-        gst_pct: matched.tax_percentage || 12,
+        mrp: String(baseSellingPrice || ''),
+        selling_price: String(baseSellingPrice || ''),
+        gst_pct: initialGstPct,
+        expiry_date: matched.expiry_date || '',
         inventory_id: matched.inventory_id,
         stock_qty: matched.stock_qty,
         units_per_strip: ups,
@@ -222,8 +236,25 @@ export default function POS() {
     return [...p, blankRow()];
   });
 
+  const handleBillTypeToggle = (type) => {
+    if (type === billType) return;
+    setBillType(type);
+    setRows(p => p.map(r => {
+      const inv = inventory.find(m => m.label.toLowerCase() === (r.name || '').toLowerCase());
+      const baseSellingPrice = parseFloat(r.selling_price || inv?.selling_price || r.mrp) || 0;
+      if (baseSellingPrice <= 0) return r;
+      const newGstPct = type === 'customer' ? 0 : (parseFloat(r.gst_pct) || parseFloat(inv?.tax_percentage) || 12);
+      return {
+        ...r,
+        mrp: String(baseSellingPrice),
+        selling_price: String(baseSellingPrice),
+        gst_pct: newGstPct,
+      };
+    }));
+  };
+
   // ── Computed ───────────────────────────────────────────────────────────────
-  const computed = useMemo(() => rows.map(computeRow), [rows]);
+  const computed = useMemo(() => rows.map(r => computeRow(r, billType)), [rows, billType]);
 
   // ── Payment ────────────────────────────────────────────────────────────────
   const [paymentMode, setPaymentMode] = useState('Cash');
@@ -281,6 +312,7 @@ export default function POS() {
         const inv = inventory.find(m => m.label.toLowerCase() === r.name.toLowerCase());
         const ups = r.units_per_strip || inv?.units_per_strip || 1;
         const norm = normalizeQty({ strips: r.strips || 0, loose: r.loose_qty || 0, unitsPerStrip: ups });
+        const baseSellingPrice = parseFloat(r.selling_price || inv?.selling_price || r.mrp) || 0;
         return {
           inventory_id: r.inventory_id || inv?.inventory_id || inv?.id,
           name: r.name,
@@ -293,9 +325,11 @@ export default function POS() {
           unit_type: r.unit_type || inv?.unit_type || 'Strip',
           free_qty: parseFloat(r.free_qty) || 0,
           price: parseFloat(r.mrp) || 0,
-          selling_price: parseFloat(r.selling_price || r.mrp) || 0,
-          mrp: parseFloat(r.selling_price || r.mrp) || 0,
+          selling_price: baseSellingPrice,
+          mrp: parseFloat(r.mrp) || baseSellingPrice,
           old_mrp: parseFloat(r.old_mrp) || 0,
+          expiry_date: r.expiry_date || inv?.expiry_date || '',
+          batch_number: r.batch_no || inv?.batch_number || '',
           tax: r.tax_amt,
           discount_pct: parseFloat(r.disc_pct) || 0,
           scheme_pct: parseFloat(r.scheme_pct) || 0,
@@ -393,7 +427,7 @@ export default function POS() {
               type="button"
               role="radio"
               aria-checked={billType === 'customer'}
-              onClick={() => setBillType('customer')}
+              onClick={() => handleBillTypeToggle('customer')}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all min-h-[36px] flex items-center gap-1.5 ${
                 billType === 'customer'
                   ? 'bg-green-700 text-white shadow-sm'
@@ -406,7 +440,7 @@ export default function POS() {
               type="button"
               role="radio"
               aria-checked={billType === 'wholesale'}
-              onClick={() => setBillType('wholesale')}
+              onClick={() => handleBillTypeToggle('wholesale')}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all min-h-[36px] flex items-center gap-1.5 ${
                 billType === 'wholesale'
                   ? 'bg-green-700 text-white shadow-sm'
@@ -508,7 +542,7 @@ export default function POS() {
                 <tr>
                   <th id="th-pos-med" scope="col" className="px-3 py-2.5 text-left font-bold min-w-[170px] text-green-950">Medicine</th>
                   <th id="th-pos-qty" scope="col" className="px-2 py-2.5 text-center font-bold min-w-[175px] text-green-950">Qty</th>
-                  <th id="th-pos-mrp" scope="col" className="px-2 py-2.5 text-left font-bold w-20 text-green-950">MRP</th>
+                  <th id="th-pos-mrp" scope="col" className="px-2 py-2.5 text-left font-bold w-24 text-green-950">{billType === 'customer' ? 'MRP (GST Incl)' : 'MRP'}</th>
                   <th id="th-pos-gst" scope="col" className="px-2 py-2.5 text-center font-bold w-16 text-green-950">GST%</th>
                   <th id="th-pos-tax" scope="col" className="px-2 py-2.5 text-right font-bold w-20 text-green-950">Tax</th>
                   <th id="th-pos-disc" scope="col" className="px-2 py-2.5 text-center font-bold w-16 text-green-950">Disc%</th>
@@ -545,9 +579,21 @@ export default function POS() {
                               onSelect={m => pickMedicine(idx, m)}
                               className={tiCls}
                             />
+                            {row.expiry_date && (
+                              <span className="text-[10px] text-gray-500 font-medium block mt-0.5" data-testid={`expiry-${idx}`}>
+                                Exp: {formatExpiryDate(row.expiry_date)}
+                              </span>
+                            )}
                           </div>
                         ) : (
-                          <span className="font-semibold text-gray-800 truncate block max-w-[150px]" title={row.name}>{row.name}</span>
+                          <div>
+                            <span className="font-semibold text-gray-800 truncate block max-w-[150px]" title={row.name}>{row.name}</span>
+                            {row.expiry_date && (
+                              <span className="text-[10px] text-gray-500 font-medium block" data-testid={`expiry-${idx}`}>
+                                Exp: {formatExpiryDate(row.expiry_date)}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
 
@@ -701,7 +747,7 @@ export default function POS() {
                               aria-labelledby="th-pos-gst"
                               aria-label={`GST percentage for row ${idx + 1}`}
                               onChange={e => updateRow(idx, 'gst_pct', e.target.value)}
-                              className={`${tiCls} cursor-pointer w-16 tabular-nums`}
+                              className={`${tiCls} cursor-pointer w-20 min-w-[72px] font-medium tabular-nums`}
                             >
                               {GST_RATES.map(r => <option key={r} value={r}>{r}%</option>)}
                             </select>

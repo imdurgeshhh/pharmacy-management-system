@@ -20,6 +20,7 @@ const PurchaseItemsTable = ({
   onUpdateMrp,
   saving = false,
   rupee = defaultRupee,
+  hasSupplier = true,
 }) => {
   const [deleteConfirmIdx, setDeleteConfirmIdx] = useState(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -173,10 +174,17 @@ const PurchaseItemsTable = ({
 
           {/* Bottom Toolbar */}
           <div className="px-6 py-4 border-t border-green-100 bg-green-50/30 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-gray-700">
-              <span className="font-bold text-gray-800 tabular-nums">{localEntries.length}</span> medicine{localEntries.length > 1 ? 's' : ''} ·{' '}
-              Total qty: <span className="font-bold tabular-nums">{totalQty}</span>
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+              <p className="text-sm text-gray-700">
+                <span className="font-bold text-gray-800 tabular-nums">{localEntries.length}</span> medicine{localEntries.length > 1 ? 's' : ''} ·{' '}
+                Total qty: <span className="font-bold tabular-nums">{totalQty}</span>
+              </p>
+              {!hasSupplier && (
+                <span className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg">
+                  ⚠️ Step 1: Select a supplier above to enable saving
+                </span>
+              )}
+            </div>
             <div className="flex gap-3">
               <button
                 type="button"

@@ -141,11 +141,47 @@ function formatQty(totalUnits = 0, unitsPerStrip = 1, unitType = 'Strip') {
     return `${loose} Tab`;
 }
 
+/**
+ * Formats an expiry date string or Date object into standard 'MM/YY' format.
+ * Handles ISO strings (2027-09-15T...), YYYY-MM-DD, MM/YY, MM/YYYY, Date objects.
+ * Returns '--/--' for null, undefined, or invalid dates.
+ */
+function formatExpiryDate(raw) {
+    if (!raw) return '--/--';
+    if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (!trimmed || trimmed === '--/--' || trimmed === 'N/A') return '--/--';
+        if (/^\d{2}\/\d{2}$/.test(trimmed)) return trimmed;
+        if (/^\d{2}\/\d{4}$/.test(trimmed)) {
+            return `${trimmed.slice(0, 2)}/${trimmed.slice(-2)}`;
+        }
+        if (trimmed.includes('-')) {
+            const datePart = trimmed.split('T')[0];
+            const parts = datePart.split('-');
+            if (parts.length === 3) {
+                if (parts[0].length === 4) {
+                    // YYYY-MM-DD
+                    return `${parts[1].padStart(2, '0')}/${parts[0].slice(-2)}`;
+                } else if (parts[2].length === 4) {
+                    // DD-MM-YYYY
+                    return `${parts[1].padStart(2, '0')}/${parts[2].slice(-2)}`;
+                }
+            }
+        }
+    }
+    const d = new Date(raw);
+    if (!isNaN(d.getTime())) {
+        return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear().toString().slice(-2)}`;
+    }
+    return '--/--';
+}
+
 module.exports = {
     toTotalUnits,
     fromTotalUnits,
     normalizeQty,
     pricePerUnit,
     lineAmount,
-    formatQty
+    formatQty,
+    formatExpiryDate
 };

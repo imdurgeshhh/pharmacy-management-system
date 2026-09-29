@@ -2,7 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getShopProfile } from '../config/shop';
 import { numberToWords } from './numberToWords';
-import { formatQty } from './quantity';
+import { formatQty, formatExpiryDate } from './quantity';
 
 const fmt = (n) => `Rs. ${(Number(n) || 0).toFixed(2)}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -118,8 +118,9 @@ export function generateInvoicePDF(
   let fy;
 
   if (isCustomerBill) {
-    // ── 3. Medicine Items Table (Customer Bill: 4 columns only) ─────────────
+    // ── 3. Medicine Items Table (Customer Bill: 5 columns) ─────────────
     let customerSubTotal = 0;
+    let customerTotalTax = 0;
     const bodyRows = rows.map((r, i) => {
       const ups = parseInt(r.units_per_strip, 10) || 1;
       const totalUnits = parseInt(r.qty, 10) || 0;
@@ -127,53 +128,69 @@ export function generateInvoicePDF(
       const unitType = (r.unit_type || r.unitType || '').toLowerCase();
       const isSpecialUnit = unitType.includes('bottle') || unitType.includes('syrup') || unitType.includes('tube') || unitType.includes('piece');
       const qtyStr = (ups > 1 || isSpecialUnit) ? formatQty(totalUnits, ups, r.unit_type || r.unitType || 'Strip') : r.qty;
-      const sellingPrice = parseFloat(r.selling_price || r.mrp || 0);
-      const gstPct = r.gst_pct !== undefined && r.gst_pct !== null ? parseFloat(r.gst_pct) : 12;
-      const effectiveGstPct = gstPct > 0 ? gstPct : 12;
-      // MRP (GST Included) = Selling Price + 12% GST
-      const mrpGstIncl = +(sellingPrice * (1 + effectiveGstPct / 100)).toFixed(2);
-      customerSubTotal += +(mrpGstIncl * totalUnits).toFixed(2);
+      // Strictly prioritize selling_price over mrp (never purchase_price)
+      const sellingPrice = parseFloat(r.selling_price !== undefined && r.selling_price !== null && Number(r.selling_price) > 0
+        ? r.selling_price
+        : (r.mrp || 0));
+      // Print selling price as-is under MRP (GST Included)
+      const gstPct = parseFloat(r.gst_pct !== undefined ? r.gst_pct : (r.gstPct !== undefined ? r.gstPct : 0)) || 0;
+      const lineBase = +(sellingPrice * totalUnits).toFixed(2);
+      const lineTax = gstPct > 0 ? +(lineBase * gstPct / 100).toFixed(2) : 0;
+      customerSubTotal += lineBase;
+      customerTotalTax += lineTax;
+      const expStr = formatExpiryDate(r.expiry_date || r.expDate || r.expiry || r.batch_expiry);
       return [
         i + 1,
         nameDesc,
         qtyStr,
-        fmt(mrpGstIncl)
+        expStr,
+        fmt(sellingPrice)
       ];
     });
 
     autoTable(doc, {
       startY: tableY,
-      head: [['S.No.', 'Medicine Name', 'Quantity', 'MRP (GST Included)']],
+      head: [['S.No.', 'Medicine Name', 'Quantity', 'Expiry Date', 'MRP (GST Included)']],
       body: bodyRows,
       headStyles: { fillColor: [46, 125, 50], textColor: 255, fontSize: 8, fontStyle: 'bold' },
       bodyStyles: { fontSize: 8 },
       alternateRowStyles: { fillColor: [240, 255, 240] },
       styles: { cellPadding: 4 },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 40 },
+        0: { halign: 'center', cellWidth: 35 },
         1: { halign: 'left' },
-        2: { halign: 'center', cellWidth: 90 },
-        3: { halign: 'right', cellWidth: 120 }
+        2: { halign: 'center', cellWidth: 80 },
+        3: { halign: 'center', cellWidth: 75 },
+        4: { halign: 'right', cellWidth: 110 }
       }
     });
 
-    // ── 4. Summary: ONLY Subtotal, Discount, Grand Total ───────────────────
+    // ── 4. Summary: Subtotal, Discount, GST (if chosen), Grand Total ───────────────────
     fy = (doc.lastAutoTable?.finalY || tableY + 50) + 12;
     doc.setFontSize(8.5);
     doc.setTextColor(60, 60, 60);
 
     const totalDisc = Math.abs(Number(summary.totalDiscount) || 0);
+    const totalTax = Number(summary.totalGST) > 0 ? Number(summary.totalGST) : customerTotalTax;
     const usedSubTotal = customerSubTotal > 0 ? customerSubTotal : (Number(summary.subtotal) || 0);
-    const grandTotal = +(usedSubTotal - totalDisc).toFixed(2);
+    const grandTotal = +(usedSubTotal - totalDisc + totalTax).toFixed(2);
 
     sumY = fy + 12;
     doc.text('Subtotal:', rX - 100, sumY, { align: 'right' });
     doc.text(fmt(usedSubTotal), rX, sumY, { align: 'right' });
     sumY += 14;
 
-    doc.text('Discount:', rX - 100, sumY, { align: 'right' });
-    doc.text(`- ${fmt(totalDisc)}`, rX, sumY, { align: 'right' });
-    sumY += 14;
+    if (totalDisc > 0) {
+      doc.text('Discount:', rX - 100, sumY, { align: 'right' });
+      doc.text(`- ${fmt(totalDisc)}`, rX, sumY, { align: 'right' });
+      sumY += 14;
+    }
+
+    if (totalTax > 0) {
+      doc.text('GST:', rX - 100, sumY, { align: 'right' });
+      doc.text(`+ ${fmt(totalTax)}`, rX, sumY, { align: 'right' });
+      sumY += 14;
+    }
 
     // Grand Total Highlight
     doc.setFillColor(46, 125, 50);

@@ -300,5 +300,64 @@ test('Module: sales', async (t) => {
       .expect(200);
     assert.ok(prevWs.headers['content-type']?.includes('pdf'));
   });
+
+  await t.test('Customer Bill uses selling_price (not purchase_price) for MRP and includes expiry_date', async () => {
+    const { prepareCustomerBillItems } = require('../../utils/invoiceGenerator');
+
+    const mockItems = [
+      {
+        name: 'Paracetamol 650',
+        qty: 2,
+        purchase_price: 20.00,
+        selling_price: 35.00,
+        mrp: 35.00,
+        tax: 12,
+        gstPct: 12,
+        expiry_date: '2027-09-15',
+        units_per_strip: 10,
+        unit_type: 'Strip'
+      }
+    ];
+
+    const { processedItems, subTotal, totalTax } = prepareCustomerBillItems(mockItems);
+    assert.equal(processedItems.length, 1);
+    const item = processedItems[0];
+
+    // sellingPrice must be 35.00 (not purchase_price 20.00)
+    assert.equal(item.sellingPrice, 35.00);
+    // MRP (GST Included) prints selling_price as-is (35.00)
+    assert.equal(item.mrpGstIncl, 35.00);
+    assert.notEqual(item.mrpGstIncl, 20.00, 'MRP must not be purchase_price');
+
+    // Expiry date must appear formatted in the data structure
+    assert.equal(item.expStr, '09/27');
+    assert.equal(subTotal, +(35.00 * 2).toFixed(2));
+    assert.equal(totalTax, +(70.00 * 0.12).toFixed(2));
+  });
+
+  await t.test('Customer Bill preview generates valid PDF with selling_price and expiry_date', async () => {
+    auth.asAdmin();
+    const res = await request(app)
+      .post('/api/sales/invoice/preview')
+      .send({
+        billType: 'customer',
+        customer_name: 'Customer Test',
+        items: [{
+          name: 'Azithromycin 500',
+          qty: 1,
+          purchase_price: 40.00,
+          selling_price: 70.00,
+          mrp: 70.00,
+          tax: 12,
+          expiry_date: '2028-05-20',
+          units_per_strip: 3,
+          unit_type: 'Strip'
+        }],
+        payment_mode: 'Cash'
+      })
+      .expect(200);
+
+    assert.ok(res.headers['content-type']?.includes('pdf'));
+  });
 });
 

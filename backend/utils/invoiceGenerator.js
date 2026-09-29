@@ -375,9 +375,48 @@ function generateInvoice(data, res) {
 // Alias for wholesale bill — keeps the existing detailed layout
 const generateWholesaleBillPDF = generateInvoice;
 
+const { formatQty: fmtQty, formatExpiryDate } = require('./quantity');
+
+function prepareCustomerBillItems(items) {
+  let subTotal = 0;
+  let totalTax = 0;
+  const processedItems = (Array.isArray(items) ? items : []).map((it, idx) => {
+    const qty = parseFloat(it.qty) || 0;
+    // Strictly read selling_price, fallback to mrp (never purchase_price)
+    const sellingPrice = parseFloat(it.selling_price !== undefined && it.selling_price !== null && Number(it.selling_price) > 0
+      ? it.selling_price
+      : (it.mrp || it.price || 0));
+    const gstPct = parseFloat(it.gstPct !== undefined ? it.gstPct : (it.gst_pct !== undefined ? it.gst_pct : 0)) || 0;
+    // Print selling price as-is under MRP (GST Included)
+    const lineBase = +(sellingPrice * qty).toFixed(2);
+    const lineTax = gstPct > 0 ? +(lineBase * gstPct / 100).toFixed(2) : 0;
+    subTotal += lineBase;
+    totalTax += lineTax;
+
+    const ups = parseInt(it.unitsPerStrip || it.units_per_strip || 1, 10) || 1;
+    const unitType = it.unitType || it.unit_type || 'Strip';
+    const qtyStr = fmtQty(qty, ups, unitType);
+    const expStr = formatExpiryDate(it.expDate || it.expiryDate || it.expiry_date || it.exp || it.expiry);
+
+    return {
+      idx: idx + 1,
+      name: it.medicineName || it.medicine_name || it.name || 'Medicine',
+      qtyStr,
+      expStr,
+      sellingPrice,
+      gstPct,
+      mrpGstIncl: sellingPrice,
+      lineTotal: lineBase,
+      tax: lineTax
+    };
+  });
+
+  return { processedItems, subTotal, totalTax };
+}
+
 /**
  * Generates a simplified Customer Bill PDF.
- * Table columns: S.No. | Medicine Name | Quantity | MRP (GST Included)
+ * Table columns: S.No. | Medicine Name | Quantity | Expiry Date | MRP (GST Included)
  * Summary: Subtotal, Discount, Grand Total only.
  * Total in words shown at the bottom.
  */
@@ -451,9 +490,10 @@ function generateCustomerBillPDF(data, res) {
   // ── 3. ITEMS TABLE ────────────────────────────────────────────────────
   const cols = [
     { label: 'S.No.',                x: lX,       w: 32,  align: 'center' },
-    { label: 'Medicine Name',        x: lX + 32,  w: 260, align: 'left'   },
-    { label: 'Quantity',             x: lX + 292, w: 90,  align: 'center' },
-    { label: 'MRP (GST Included)',   x: lX + 382, w: rX - (lX + 382), align: 'right' },
+    { label: 'Medicine Name',        x: lX + 32,  w: 215, align: 'left'   },
+    { label: 'Quantity',             x: lX + 247, w: 85,  align: 'center' },
+    { label: 'Expiry Date',          x: lX + 332, w: 75,  align: 'center' },
+    { label: 'MRP (GST Included)',   x: lX + 407, w: rX - (lX + 407), align: 'right' },
   ];
 
   const hdrH = 18;
@@ -468,35 +508,18 @@ function generateCustomerBillPDF(data, res) {
   const rowH = 15;
   const items = Array.isArray(data.items) ? data.items : [];
 
-  let subTotal = 0;
-  let totalDisc = parseFloat(data.summary?.discountAmount || 0);
-  const { formatQty: fmtQty } = require('./quantity');
-
-  const processedItems = items.map((it, idx) => {
-    const qty  = parseFloat(it.qty) || 0;
-    const sellingPrice = parseFloat(it.selling_price || it.mrp || it.price || 0);
-    const gstPct = it.gstPct !== undefined && it.gstPct !== null ? parseFloat(it.gstPct) : (parseFloat(it.tax) || 12);
-    const effectiveGstPct = gstPct > 0 ? gstPct : 12;
-    // MRP (GST Included) = Selling Price + 12% GST
-    const mrpGstIncl = +(sellingPrice * (1 + effectiveGstPct / 100)).toFixed(2);
-    const lineTotal  = +(mrpGstIncl * qty).toFixed(2);
-    subTotal += lineTotal;
-
-    const ups = parseInt(it.unitsPerStrip || it.units_per_strip || 1, 10) || 1;
-    const unitType = it.unitType || it.unit_type || 'Strip';
-    const qtyStr = fmtQty(qty, ups, unitType);
-
-    return { idx: idx + 1, name: it.medicineName || it.medicine_name || it.name || 'Medicine', qtyStr, mrpGstIncl, lineTotal };
-  });
+  let totalDisc = parseFloat(data.summary?.discountAmount || data.discount_amount || 0);
+  const { processedItems, subTotal, totalTax } = prepareCustomerBillItems(items);
 
   processedItems.forEach((it, i) => {
     const fillColor = i % 2 === 0 ? '#f9fdf9' : '#ffffff';
     doc.rect(lX, rowY, rX - lX, rowH).fill(fillColor);
     doc.fillColor('#222222').font('Helvetica').fontSize(7.5);
-    doc.text(String(it.idx),            cols[0].x + 3, rowY + 3, { width: cols[0].w - 6, align: cols[0].align });
-    doc.text(it.name,                   cols[1].x + 3, rowY + 3, { width: cols[1].w - 6, align: cols[1].align });
-    doc.text(it.qtyStr,                 cols[2].x + 3, rowY + 3, { width: cols[2].w - 6, align: cols[2].align });
-    doc.text(`Rs. ${it.mrpGstIncl.toFixed(2)}`, cols[3].x + 3, rowY + 3, { width: cols[3].w - 6, align: cols[3].align });
+    doc.text(String(it.idx),                    cols[0].x + 3, rowY + 3, { width: cols[0].w - 6, align: cols[0].align });
+    doc.text(it.name,                           cols[1].x + 3, rowY + 3, { width: cols[1].w - 6, align: cols[1].align });
+    doc.text(it.qtyStr,                         cols[2].x + 3, rowY + 3, { width: cols[2].w - 6, align: cols[2].align });
+    doc.text(it.expStr,                         cols[3].x + 3, rowY + 3, { width: cols[3].w - 6, align: cols[3].align });
+    doc.text(`Rs. ${it.sellingPrice.toFixed(2)}`, cols[4].x + 3, rowY + 3, { width: cols[4].w - 6, align: cols[4].align });
     rowY += rowH;
   });
 
@@ -505,14 +528,15 @@ function generateCustomerBillPDF(data, res) {
   rowY += 8;
 
   // ── 4. SUMMARY ────────────────────────────────────────────────────────
-  const grandTotal = +(subTotal - totalDisc).toFixed(2);
+  const grandTotal = +(subTotal - totalDisc + totalTax).toFixed(2);
 
   const sumX = rX - 170;
   const labelW = 90, valW = 75;
 
   const sumLines = [
     { label: 'Subtotal',    val: `Rs. ${subTotal.toFixed(2)}`, bold: false },
-    { label: 'Discount',    val: `- Rs. ${totalDisc.toFixed(2)}`, bold: false },
+    ...(totalDisc > 0 ? [{ label: 'Discount', val: `- Rs. ${totalDisc.toFixed(2)}`, bold: false }] : []),
+    ...(totalTax > 0  ? [{ label: 'GST',      val: `+ Rs. ${totalTax.toFixed(2)}`,  bold: false }] : []),
     { label: 'Grand Total', val: `Rs. ${grandTotal.toFixed(2)}`,  bold: true  },
   ];
 
@@ -551,3 +575,4 @@ function generateCustomerBillPDF(data, res) {
 module.exports = generateInvoice;
 module.exports.generateWholesaleBillPDF = generateWholesaleBillPDF;
 module.exports.generateCustomerBillPDF  = generateCustomerBillPDF;
+module.exports.prepareCustomerBillItems = prepareCustomerBillItems;

@@ -18,6 +18,7 @@ function validate(validations) {
     }
 
     const firstError = errors.array()[0];
+    console.warn(`[Validation 400] ${req.method} ${req.originalUrl}: ${firstError.msg}`);
     return res.status(400).json({
       error: firstError.msg,
       errors: errors.array().map((err) => ({

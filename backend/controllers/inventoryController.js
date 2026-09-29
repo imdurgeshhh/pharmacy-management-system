@@ -46,7 +46,8 @@ exports.getInventory = async (req, res) => {
                 m.admin_id,
                 COALESCE(SUM(i.stock_qty), 0) as total_stock,
                 COALESCE(
-                    (SELECT selling_price FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
+                    (SELECT selling_price FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 AND inv.selling_price > 0 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
+                    (SELECT mrp FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 AND inv.mrp > 0 ORDER BY inv.created_at DESC, inv.id DESC LIMIT 1),
                     COALESCE(MAX(i.selling_price), MAX(i.mrp), 0)
                 ) as selling_price,
                 COALESCE(
@@ -59,7 +60,11 @@ exports.getInventory = async (req, res) => {
                 ) as purchase_price,
                 COALESCE(MAX(i.tax_percentage), 12) as tax_percentage,
                 MAX(i.id) as inventory_id,
-                MAX(i.batch_number) as batch_number
+                MAX(i.batch_number) as batch_number,
+                COALESCE(
+                    (SELECT inv.expiry_date FROM INVENTORY inv WHERE inv.medicine_id = m.id AND inv.admin_id = $1 AND inv.stock_qty > 0 ORDER BY inv.expiry_date ASC, inv.id ASC LIMIT 1),
+                    MAX(i.expiry_date)
+                ) as expiry_date
             FROM MEDICINES m
             LEFT JOIN INVENTORY i ON m.id = i.medicine_id AND i.admin_id = $1
             ${whereSql}

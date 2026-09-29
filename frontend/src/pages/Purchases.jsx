@@ -578,39 +578,84 @@ export default function Purchases() {
     const itemsToSave = (Array.isArray(submittedEntries) && submittedEntries.length > 0)
       ? submittedEntries
       : entries;
-    if (itemsToSave.length === 0) return alert('Add at least one medicine first.');
+
+    if (!itemsToSave || itemsToSave.length === 0) {
+      setFormValidationMsg('⚠️ Please add at least one medicine item to the stock entry list first.');
+      alert('Add at least one medicine first.');
+      return;
+    }
+
+    if (!supplierId) {
+      const msg = 'Please select a supplier in Step 1 before saving stock entry.';
+      setFormValidationMsg(`⚠️ ${msg}`);
+      alert(msg);
+      document.getElementById('supp-select-btn')?.focus();
+      return;
+    }
+
+    // Pre-flight item validation
+    for (let i = 0; i < itemsToSave.length; i++) {
+      const item = itemsToSave[i];
+      const medName = item.medicine_name || item.name || '';
+      if (!medName.trim()) {
+        const msg = `Medicine name is required for item #${i + 1}.`;
+        setFormValidationMsg(`⚠️ ${msg}`);
+        alert(msg);
+        return;
+      }
+      const qty = parseFloat(item.qty);
+      if (isNaN(qty) || qty <= 0) {
+        const msg = `Please enter a valid quantity greater than 0 for "${medName}".`;
+        setFormValidationMsg(`⚠️ ${msg}`);
+        alert(msg);
+        return;
+      }
+    }
 
     setSaving(true);
     try {
-      const totalTax = itemsToSave.reduce((s, e) => s + e.tax_amt * (parseFloat(e.qty) || 0), 0);
-      const totalAmt = itemsToSave.reduce((s, e) => s + e.final * (parseFloat(e.qty) || 0), 0);
+      const totalTax = itemsToSave.reduce((s, e) => s + (parseFloat(e.tax_amt) || 0) * (parseFloat(e.qty) || 0), 0);
+      const totalAmt = itemsToSave.reduce((s, e) => s + (parseFloat(e.final ?? e.price) || 0) * (parseFloat(e.qty) || 0), 0);
 
       await api.post('/purchases', {
-        supplier_id: supplierId,
+        supplier_id: parseInt(supplierId, 10),
         total_amount: +totalAmt.toFixed(2),
         tax_amount:   +totalTax.toFixed(2),
-        items: itemsToSave.map(e => ({
-          medicine_id:      e.medicine_id ? parseInt(e.medicine_id) : null,
-          medicine_name:    e.medicine_name,
-          name:             e.medicine_name,
-          schedule:         e.schedule || 'NONE',
-          brand_name:       e.brand_name || null,
-          salt_composition: e.salt_composition || null,
-          category:         e.category || 'General',
-          dosage_form:      e.dosage_form || null,
-          strength:         e.strength || null,
-          batch_number:     e.batch_number,
-          qty:              parseFloat(e.qty),
-          units_per_strip:  parseInt(e.units_per_strip, 10) || 1,
-          strips_qty:       parseInt(e.strips_qty, 10) || 0,
-          loose_qty:        parseInt(e.loose_qty, 10) || 0,
-          price:            parseFloat(e.final),
-          tax:              e.tax_amt,
-          selling_price:    parseFloat(e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.mrp !== undefined && e.mrp !== '' ? e.mrp : (e.price || 0))),
-          mrp:              parseFloat(e.mrp !== undefined && e.mrp !== '' ? e.mrp : (e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.price || 0))),
-          expiry_date:      e.expiry_date || null,
-          tax_percentage:   parseFloat(e.gst_pct) || 0,
-        })),
+        items: itemsToSave.map(e => {
+          const ups = parseInt(e.units_per_strip, 10) || 1;
+          const costPrice = parseFloat(e.price ?? e.final ?? 0) || 0;
+          const rawSelling = e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.mrp !== undefined && e.mrp !== '' ? e.mrp : costPrice);
+          const sellPrice = parseFloat(rawSelling);
+          const finalSellPrice = isNaN(sellPrice) || sellPrice < 0 ? costPrice : sellPrice;
+
+          const rawMrp = e.mrp !== undefined && e.mrp !== '' ? e.mrp : finalSellPrice;
+          const mrpVal = parseFloat(rawMrp);
+          const finalMrp = isNaN(mrpVal) || mrpVal < 0 ? finalSellPrice : mrpVal;
+          const totalUnits = parseFloat(e.qty) || 0;
+
+          return {
+            medicine_id:      e.medicine_id ? parseInt(e.medicine_id, 10) : null,
+            medicine_name:    e.medicine_name || e.name || 'Medicine',
+            name:             e.medicine_name || e.name || 'Medicine',
+            schedule:         (e.schedule || 'NONE').toUpperCase(),
+            brand_name:       e.brand_name || null,
+            salt_composition: e.salt_composition || null,
+            category:         e.category || 'General',
+            dosage_form:      e.dosage_form || null,
+            strength:         e.strength || null,
+            batch_number:     (e.batch_number || '').trim() || `BATCH-${Date.now()}`,
+            qty:              totalUnits,
+            units_per_strip:  ups,
+            strips_qty:       parseInt(e.strips_qty, 10) || 0,
+            loose_qty:        parseInt(e.loose_qty, 10) || 0,
+            price:            costPrice,
+            tax:              parseFloat(e.tax_amt) || 0,
+            selling_price:    finalSellPrice,
+            mrp:              finalMrp,
+            expiry_date:      e.expiry_date || null,
+            tax_percentage:   parseFloat(e.gst_pct) || 0,
+          };
+        }),
       });
 
       alert(`✅ ${itemsToSave.length} medicine(s) saved to stock!`);
@@ -618,7 +663,9 @@ export default function Purchases() {
       invalidatePurchasesAndStock();
       loadMedicines(); // Refresh medicines list with any newly added medicine
     } catch (err) {
-      alert('Save failed: ' + (err?.response?.data?.error || err.message));
+      const errorMsg = err?.response?.data?.error || err?.response?.data?.message || err.message;
+      setFormValidationMsg(`⚠️ Save failed: ${errorMsg}`);
+      alert(`Save failed: ${errorMsg}`);
     } finally {
       setSaving(false);
     }
@@ -1076,6 +1123,7 @@ export default function Purchases() {
         }}
         saving={saving}
         rupee={rupee}
+        hasSupplier={Boolean(supplierId)}
       />
 
     </div>

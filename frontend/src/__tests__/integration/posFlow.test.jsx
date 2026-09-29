@@ -244,4 +244,71 @@ describe('Integration: POS Flow (MedicinePicker -> Table -> Checkout API)', () =
     expect(customerRadio).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('heading', { name: /customer billing/i })).toBeInTheDocument();
   });
+
+  it('selects a medicine in Customer Bill mode and verifies correct selling price and expiry date appear in the row', async () => {
+    // Inventory with distinct purchase_price (20) and selling_price (30)
+    server.use(
+      http.get(`${API_BASE}/inventory`, () => {
+        return HttpResponse.json([
+          {
+            id: 101,
+            name: 'Dolo 650',
+            purchase_price: 20.0,
+            selling_price: 30.0,
+            mrp: 30.0,
+            total_stock: 100,
+            tax_percentage: 12,
+            units_per_strip: 15,
+            batch_number: 'BATCH-DOLO',
+            expiry_date: '2027-08-31',
+          },
+        ]);
+      })
+    );
+
+    const user = userEvent.setup();
+    render(<POS />);
+
+    // Wait for inventory load
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Medicine name…/i)).toBeInTheDocument();
+    });
+
+    // Default mode is Customer Bill
+    expect(screen.getByRole('heading', { name: /customer billing/i })).toBeInTheDocument();
+
+    const pickerInput = screen.getByPlaceholderText(/Medicine name…/i);
+    await user.type(pickerInput, 'Dolo');
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /Dolo 650/i })).toBeInTheDocument();
+    });
+
+    // MedicinePicker displays selling price (₹30.00), not purchase price (₹20.00)
+    expect(screen.getByText('₹30.00')).toBeInTheDocument();
+    expect(screen.queryByText('₹20.00')).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Dolo 650/i }));
+
+    // In Customer Bill: MRP (GST Included) shows selling_price as-is (30), and GST defaults to 0%
+    await waitFor(() => {
+      const mrpInput = screen.getByLabelText(/maximum retail price for row 1/i);
+      expect(mrpInput).toHaveValue(30);
+    });
+
+    // Expiry date appears in the row formatted (Exp: 08/27)
+    await waitFor(() => {
+      expect(screen.getByTestId('expiry-0')).toHaveTextContent('Exp: 08/27');
+    });
+
+    // GST% select defaults to 0%
+    const gstSelect = screen.getByRole('combobox', { name: /gst/i });
+    expect(gstSelect).toHaveValue('0');
+
+    // When GST% is chosen (e.g. 12%), tax is added to bill
+    await user.selectOptions(gstSelect, '12');
+    expect(gstSelect).toHaveValue('12');
+  });
 });
+
+
