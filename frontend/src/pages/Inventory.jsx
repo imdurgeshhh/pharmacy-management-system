@@ -56,7 +56,8 @@ const DEFAULT_FORM_DATA = {
     barcode: '',
     description: '',
     schedule: 'NONE',
-    units_per_strip: 1
+    units_per_strip: 1,
+    unit_type: 'Strip'
 };
 
 const Inventory = () => {
@@ -138,7 +139,8 @@ const Inventory = () => {
             barcode: item.barcode || '',
             description: item.description || '',
             schedule: item.schedule || 'NONE',
-            units_per_strip: item.units_per_strip || 1
+            units_per_strip: item.units_per_strip || 1,
+            unit_type: item.unit_type || 'Strip'
         });
         setErrorMsg(null);
         setShowModal(true);
@@ -348,7 +350,7 @@ const Inventory = () => {
                                                         ? 'bg-orange-500/10 text-orange-700 border-orange-500/20'
                                                         : 'bg-[rgb(var(--color-primary))]/10 text-[rgb(var(--color-primary))] border-[rgb(var(--color-primary))]/20'
                                                 }`}>
-                                                    {item.formatted_stock || formatQty(item.total_stock, item.units_per_strip)}
+                                                    {item.formatted_stock || formatQty(item.total_stock, item.units_per_strip, item.unit_type || 'Strip')}
                                                 </span>
                                             </td>
                                             <td className="p-4 flex justify-center items-center gap-2">
@@ -485,6 +487,19 @@ const Inventory = () => {
                                 value={formData.barcode}
                                 onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
                             />
+                            <FormField
+                                label="Unit Type"
+                                as="select"
+                                name="unit_type"
+                                value={formData.unit_type || 'Strip'}
+                                onChange={(e) => setFormData({ ...formData, unit_type: e.target.value })}
+                                hint="Packaging type for sales and invoice formatting."
+                            >
+                                <option value="Strip">Strip (Tablets / Capsules)</option>
+                                <option value="Syrup/Bottle">Bottle (Syrup / Liquid)</option>
+                                <option value="Tube">Tube (Ointment / Gel / Cream)</option>
+                                <option value="Piece">Piece / Single Item</option>
+                            </FormField>
                             <FormField
                                 label="Units per Strip"
                                 type="number"

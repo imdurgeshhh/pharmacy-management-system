@@ -248,4 +248,144 @@ test('Module: Strip + Loose Tablet Billing & Stock Tracking', async (t) => {
     const afterSale = await db.query('SELECT stock_qty FROM INVENTORY WHERE medicine_id = $1', [syrupId]);
     assert.equal(parseInt(afterSale.rows[0].stock_qty, 10), 7);
   });
+
+  await t.test('8. Purchase with strips_qty: 0, loose_qty: 0 and explicit qty does not fail with Invalid quantity', async () => {
+    auth.asAdmin();
+    const batchNo = 'PAR-2024-01';
+    const res = await request(app)
+      .post('/api/purchases')
+      .send({
+        supplier_id: supplier.id,
+        total_amount: 100.00,
+        tax_amount: 0,
+        items: [{
+          medicine_name: 'Paracetamol Direct Qty Test',
+          schedule: 'NONE',
+          batch_number: batchNo,
+          qty: 15,
+          units_per_strip: 1,
+          strips_qty: 0,
+          loose_qty: 0,
+          price: 6.00,
+          mrp: 10.00
+        }]
+      })
+      .expect(201);
+
+    assert.ok(res.body.purchaseId);
+    const invCheck = await db.query(
+      'SELECT stock_qty FROM INVENTORY WHERE batch_number = $1',
+      [batchNo]
+    );
+    assert.equal(parseInt(invCheck.rows[0].stock_qty, 10), 15);
+  });
+
+  await t.test('9. Syrup item with unit_type = "Syrup/Bottle" outputs "1 Bottle" instead of "1 Strip (10 tab)"', async () => {
+    auth.asAdmin();
+    // Create syrup item where pack size might have been set to 10
+    const medRes = await request(app)
+      .post('/api/inventory/medicine')
+      .send({
+        name: 'Ambroxol Syrup 100ml',
+        dosage_form: 'Syrup',
+        units_per_strip: 10,
+        unit_type: 'Syrup/Bottle',
+        pack_size: '100ml'
+      })
+      .expect(201);
+
+    const syrupMedId = medRes.body.id;
+    assert.equal(medRes.body.unit_type, 'Syrup/Bottle');
+
+    // Add inventory via purchase: 5 bottles
+    const batchNo = 'SYP-BATCH-101';
+    await request(app)
+      .post('/api/purchases')
+      .send({
+        supplier_id: supplier.id,
+        total_amount: 450.00,
+        tax_amount: 0,
+        items: [{
+          medicine_id: syrupMedId,
+          batch_number: batchNo,
+          qty: 5,
+          price: 90.00,
+          mrp: 110.00
+        }]
+      })
+      .expect(201);
+
+    // Verify inventory returns formatted_stock as "5 Bottle" (NOT "5 Units" or "x Strip")
+    const invRes = await request(app).get('/api/inventory?search=Ambroxol');
+    assert.equal(invRes.status, 200);
+    const item = invRes.body.find(m => m.id === syrupMedId);
+    assert.ok(item, 'Syrup item should be in inventory');
+    assert.equal(item.formatted_stock, '5 Bottle');
+
+    // Check inventory record directly
+    const invCheck = await db.query('SELECT id FROM INVENTORY WHERE medicine_id = $1', [syrupMedId]);
+    const sInvId = invCheck.rows[0].id;
+
+    // Sell 1 bottle
+    const saleRes = await request(app)
+      .post('/api/sales')
+      .send({
+        customer_name: 'Patient Cough',
+        billType: 'customer',
+        items: [{
+          inventory_id: sInvId,
+          qty: 1,
+          mrp: 110.00
+        }]
+      })
+      .expect(201);
+
+    assert.ok(saleRes.body.saleId);
+    assert.equal(saleRes.body.billType, 'customer');
+
+    // Verify formatted_qty in sale details is "1 Bottle" (NOT "1 Strip (10 tab)")
+    const saleCheck = await request(app).get(`/api/sales/${saleRes.body.saleId}`).expect(200);
+    assert.equal(saleCheck.body.items[0].formatted_qty, '1 Bottle');
+    assert.notEqual(saleCheck.body.items[0].formatted_qty, '1 Strip (10 tab)');
+  });
+
+  await t.test('10. POS billing formats: Wholesale Bill vs Customer Bill save bill_type and generate PDFs', async () => {
+    auth.asAdmin();
+    const invCheck = await db.query('SELECT id FROM INVENTORY LIMIT 1');
+    const targetInvId = invCheck.rows[0].id;
+
+    // 1. Customer Bill
+    const custSale = await request(app)
+      .post('/api/sales')
+      .send({
+        customer_name: 'Retail Customer Bill Test',
+        billType: 'customer',
+        items: [{ inventory_id: targetInvId, qty: 1, mrp: 50.00 }]
+      })
+      .expect(201);
+    assert.equal(custSale.body.billType, 'customer');
+    assert.equal(custSale.body.bill_type, 'customer');
+
+    // Customer invoice PDF returns 200
+    const custInvoice = await request(app).get(`/api/sales/invoice/${custSale.body.saleId}`).expect(200);
+    assert.ok(custInvoice.headers['content-type']?.includes('pdf'));
+
+    // 2. Wholesale Bill
+    const wsSale = await request(app)
+      .post('/api/sales')
+      .send({
+        customer_name: 'Wholesale Client Test',
+        billType: 'wholesale',
+        items: [{ inventory_id: targetInvId, qty: 1, mrp: 50.00 }]
+      })
+      .expect(201);
+    assert.equal(wsSale.body.billType, 'wholesale');
+    assert.equal(wsSale.body.bill_type, 'wholesale');
+
+    // Wholesale invoice PDF returns 200
+    const wsInvoice = await request(app).get(`/api/sales/invoice/${wsSale.body.saleId}`).expect(200);
+    assert.ok(wsInvoice.headers['content-type']?.includes('pdf'));
+  });
 });
+
+

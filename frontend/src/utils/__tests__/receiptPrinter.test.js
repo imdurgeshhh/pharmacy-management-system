@@ -259,5 +259,35 @@ describe('utils/receiptPrinter.js', () => {
     expect(texts).not.toContain('CGST:');
     expect(texts).not.toContain('SGST:');
   });
+
+  it('renders simplified 4-column table and summary when billType is "customer"', () => {
+    generateInvoicePDF(mockCustomer, mockRows, mockSummary, 'Cash', '10049', undefined, 'customer');
+
+    expect(mockSave).toHaveBeenCalledWith('Invoice_10049.pdf');
+
+    expect(autoTable).toHaveBeenCalledTimes(1);
+    const tableOptions = autoTable.mock.calls[0][1];
+
+    expect(tableOptions.head).toEqual([
+      ['S.No.', 'Medicine Name', 'Quantity', 'MRP (GST Included)']
+    ]);
+
+    expect(tableOptions.body).toHaveLength(2);
+    expect(tableOptions.body[0][0]).toBe(1);
+    expect(tableOptions.body[0][1]).toBe('Amoxicillin 500mg');
+    // Row 0 has price 50 + 12% GST = 56.00
+    expect(tableOptions.body[0][3]).toBe('Rs. 56.00');
+
+    const texts = recordedTexts.map(t => t.str);
+    expect(texts).toContain('CUSTOMER BILL');
+    expect(texts).toContain('Subtotal:');
+    expect(texts).toContain('Discount:');
+    expect(texts.some(t => t.includes('Grand Total:'))).toBe(true);
+    // Ensure wholesale tax breakup is NOT present
+    expect(texts).not.toContain('CGST:');
+    expect(texts).not.toContain('SGST:');
+    expect(texts).not.toContain('IGST:');
+  });
 });
+
 

@@ -27,11 +27,25 @@ async function migrateUnitsPerStripV2(targetPool = pool) {
         // 1. MEDICINES: ensure column, default, nullability and check constraint
         await client.query(`
             ALTER TABLE MEDICINES
-            ADD COLUMN IF NOT EXISTS units_per_strip INTEGER DEFAULT 1;
+            ADD COLUMN IF NOT EXISTS units_per_strip INTEGER DEFAULT 1,
+            ADD COLUMN IF NOT EXISTS unit_type VARCHAR(50) DEFAULT 'Strip';
 
             UPDATE MEDICINES
             SET units_per_strip = 1
             WHERE units_per_strip IS NULL OR units_per_strip < 1;
+
+            UPDATE MEDICINES
+            SET unit_type = 'Syrup/Bottle'
+            WHERE (unit_type IS NULL OR unit_type = 'Strip')
+              AND (
+                LOWER(COALESCE(dosage_form, '')) IN ('syrup', 'suspension', 'drops', 'bottle', 'lotion')
+                OR LOWER(COALESCE(medicine_name, name, '')) LIKE '%syrup%'
+                OR LOWER(COALESCE(medicine_name, name, '')) LIKE '%suspension%'
+                OR LOWER(COALESCE(medicine_name, name, '')) LIKE '%drops%'
+                OR LOWER(COALESCE(medicine_name, name, '')) LIKE '% syp%'
+                OR LOWER(COALESCE(medicine_name, name, '')) LIKE '%lotion%'
+                OR LOWER(COALESCE(medicine_category, category, '')) LIKE '%syrup%'
+              );
 
             ALTER TABLE MEDICINES
             ALTER COLUMN units_per_strip SET NOT NULL,
@@ -47,7 +61,7 @@ async function migrateUnitsPerStripV2(targetPool = pool) {
                 END IF;
             END $$;
         `);
-        console.log('✓ MEDICINES table: units_per_strip column and constraint verified.');
+        console.log('✓ MEDICINES table: units_per_strip column, unit_type, and constraints verified.');
 
         // 2. INVENTORY: check constraint for non-negative stock
         await client.query(`

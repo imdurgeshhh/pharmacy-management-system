@@ -38,6 +38,7 @@ export async function loginAsShopkeeper(page) {
     email: 'shop@pharmacare.test',
     username: 'shopkeeper',
     role: 'shopkeeper',
+    admin_id: 1,
     token: 'e2e-shop-token',
   });
 }
@@ -50,6 +51,7 @@ export async function loginAsEmployee(page) {
     email: 'emp@pharmacare.test',
     username: 'employee',
     role: 'employee',
+    admin_id: 1,
     token: 'e2e-emp-token',
   });
 }
@@ -62,6 +64,14 @@ export async function loginAsEmployee(page) {
  * @param {object} user
  */
 async function seedAuthState(page, user) {
+  await page.addInitScript((userData) => {
+    const storeValue = {
+      state: { user: userData },
+      version: 0,
+    };
+    localStorage.setItem('pharma-storage', JSON.stringify(storeValue));
+  }, user);
+
   // Navigate to the app first (storage origin must match app origin)
   await page.goto('/');
 

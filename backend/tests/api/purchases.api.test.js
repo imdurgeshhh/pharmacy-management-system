@@ -98,6 +98,42 @@ test('Module: purchases', async (t) => {
     assert.ok(rows.rows.length > 0, 'Inventory must be created for the medicine');
   });
 
+  await t.test('POST /purchases accepts decimal mrp and persists it to purchase_items and inventory batch', async () => {
+    auth.asAdmin();
+    const batchNum = `MRP-TEST-${Date.now()}`;
+    const payload = {
+      supplier_id: supplier.id,
+      total_amount: 1500.00,
+      tax_amount: 150.00,
+      items: [
+        {
+          medicine_id: medicine.id,
+          batch_number: batchNum,
+          qty: 10,
+          price: 90.00,
+          selling_price: 110.00,
+          mrp: 125.25,
+          expiry_date: '2027-12-31'
+        }
+      ]
+    };
+    const created = await request(app).post('/api/purchases').send(payload).expect(201);
+    assert.ok(created.body.purchaseId);
+
+    // Verify GET /purchases/:id returns mrp = 125.25
+    const getRes = await request(app).get(`/api/purchases/${created.body.purchaseId}`).expect(200);
+    const item = getRes.body.items.find(i => i.batch_number === batchNum);
+    assert.ok(item, 'Item must exist in purchase');
+    assert.equal(parseFloat(item.mrp), 125.25);
+
+    // Verify database direct query
+    const dbItem = await db.query('SELECT mrp, selling_price FROM PURCHASE_ITEMS WHERE purchase_id=$1 AND batch_number=$2', [created.body.purchaseId, batchNum]);
+    assert.equal(parseFloat(dbItem.rows[0].mrp), 125.25);
+
+    const dbInv = await db.query('SELECT mrp, selling_price FROM INVENTORY WHERE medicine_id=$1 AND batch_number=$2', [medicine.id, batchNum]);
+    assert.equal(parseFloat(dbInv.rows[0].mrp), 125.25);
+  });
+
   await t.test('[Bug 1 Fix] POST /purchases stock entry appears in GET /wholesale/purchases and updates inventory', async () => {
     auth.asAdmin();
     const batchNo = `BATCH-VERIFY-${Date.now()}`;

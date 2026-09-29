@@ -1,5 +1,6 @@
 const { pool } = require('../config/db');
 const generateInvoice = require('../utils/invoiceGenerator');
+const { generateCustomerBillPDF, generateWholesaleBillPDF } = require('../utils/invoiceGenerator');
 const { resolveStoreSettings } = require('../config/store');
 const { normalizeQty, fromTotalUnits, formatQty, pricePerUnit, lineAmount } = require('../utils/quantity');
 
@@ -33,6 +34,7 @@ exports.generateInvoicePDF = async (req, res) => {
                    COALESCE(si.hsn_code, m.hsn_code, '3004') as hsn_code,
                    COALESCE(si.pack, m.pack_size, '1') as pack,
                    COALESCE(si.units_per_strip, m.units_per_strip, 1) as units_per_strip,
+                   COALESCE(m.unit_type, 'Strip') as unit_type,
                    COALESCE(si.strips_qty, 0) as strips_qty,
                    COALESCE(si.loose_qty, 0) as loose_qty,
                    i.batch_number, i.expiry_date,
@@ -83,17 +85,21 @@ exports.generateInvoicePDF = async (req, res) => {
                 const total = parseFloat(item.net_total) || (netRate * qty);
 
                 const unitsPerStrip = parseInt(item.units_per_strip, 10) || 1;
+                const unitType = item.unit_type || 'Strip';
                 const stripsQty = parseFloat(item.strips_qty) || 0;
                 let medDisplayName = item.name;
-                if (unitsPerStrip > 1 && stripsQty > 0) {
+                const normalizedUnitType = (unitType || '').toLowerCase();
+                const isSingleUnit = normalizedUnitType.includes('bottle') || normalizedUnitType.includes('syrup') || normalizedUnitType.includes('tube') || normalizedUnitType.includes('piece');
+                if (unitsPerStrip > 1 && stripsQty > 0 && !isSingleUnit) {
                     medDisplayName = `${item.name} (${stripsQty} STR × ${unitsPerStrip})`;
                 }
 
                 return {
                     srNo: index + 1,
                     medicineName: medDisplayName,
-                    pack: item.pack || (unitsPerStrip > 1 ? `${unitsPerStrip} TAB` : '1'),
+                    pack: item.pack || (unitsPerStrip > 1 && !isSingleUnit ? `${unitsPerStrip} TAB` : '1'),
                     unitsPerStrip: unitsPerStrip,
+                    unitType: unitType,
                     stripsQty: stripsQty,
                     hsnCode: item.hsn_code || '3004',
                     batchNo: item.batch_number || 'N/A',
@@ -125,7 +131,13 @@ exports.generateInvoicePDF = async (req, res) => {
             store: store
         };
 
-        generateInvoice(invoiceData, res);
+        // Route to the appropriate PDF generator based on bill_type or query param
+        const billType = req.query.format || req.query.type || sale.bill_type || 'customer';
+        if (billType === 'wholesale') {
+            (generateWholesaleBillPDF || generateInvoice)(invoiceData, res);
+        } else {
+            generateCustomerBillPDF(invoiceData, res);
+        }
 
     } catch (error) {
         console.error('Invoice PDF error:', error);
@@ -215,7 +227,12 @@ exports.previewInvoicePDF = async (req, res) => {
             store: store
         };
 
-        generateInvoice(invoiceData, res);
+        const reqBillType = req.body.billType || req.body.bill_type || req.query.format || req.query.type || 'customer';
+        if (reqBillType === 'wholesale') {
+            (generateWholesaleBillPDF || generateInvoice)(invoiceData, res);
+        } else {
+            generateCustomerBillPDF(invoiceData, res);
+        }
     } catch (error) {
         console.error('Invoice Preview PDF error:', error);
         res.status(500).json({ error: 'Failed to generate preview invoice PDF' });
@@ -228,7 +245,7 @@ exports.createSale = async (req, res) => {
         customer_id, employee_id, total_amount, tax_amount, items,
         customer_name, customer_phone, payment_mode, invoice_no,
         sub_total, discount_amount, scheme_amount, cr_dr_amount,
-        freight_amount, round_off, doctor_name, rx_number
+        freight_amount, round_off, doctor_name, rx_number, bill_type, billType
     } = req.body;
 
     if (!items || items.length === 0) {
@@ -306,19 +323,21 @@ exports.createSale = async (req, res) => {
         }
 
         // 2. Insert Sale with admin_id
+        const reqBillType = billType || bill_type;
+        const finalBillType = (reqBillType === 'wholesale' || reqBillType === 'customer') ? reqBillType : 'customer';
         const saleRes = await client.query(
             `INSERT INTO SALES (
                 customer_id, employee_id, total_amount, tax_amount,
                 payment_mode, invoice_no, sub_total, discount_amount,
                 scheme_amount, cr_dr_amount, freight_amount, round_off,
-                doctor_name, rx_number, admin_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                doctor_name, rx_number, bill_type, admin_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING id, invoice_no`,
             [
                 customerId || null, safeEmployeeId || null, finalTotalAmount, finalTaxAmount,
                 finalPaymentMode, finalInvoiceNo, finalSubTotal, finalDiscountAmount,
                 finalSchemeAmount, finalCrDrAmount, finalFreightAmount, finalRoundOff,
-                doctor_name || null, rx_number || null, adminId
+                doctor_name || null, rx_number || null, finalBillType, adminId
             ]
         );
         const saleId = saleRes.rows[0].id;
@@ -398,16 +417,21 @@ exports.createSale = async (req, res) => {
             let stripsQty = 0;
             let looseQty = 0;
 
-            if (rawStrips !== undefined || rawLoose !== undefined) {
+            if ((rawStrips !== undefined && parseInt(rawStrips, 10) > 0) || (rawLoose !== undefined && parseInt(rawLoose, 10) > 0)) {
                 const norm = normalizeQty({ strips: rawStrips || 0, loose: rawLoose || 0, unitsPerStrip });
                 requestedQty = norm.totalUnits;
                 stripsQty = norm.strips;
                 looseQty = norm.loose;
-            } else {
-                requestedQty = parseInt(item.qty || item.quantity || 1, 10);
+            } else if (item.qty !== undefined || item.quantity !== undefined) {
+                requestedQty = parseInt(item.qty !== undefined ? item.qty : item.quantity, 10);
                 const decomp = fromTotalUnits(requestedQty, unitsPerStrip);
                 stripsQty = decomp.strips;
                 looseQty = decomp.loose;
+            } else if (rawStrips !== undefined || rawLoose !== undefined) {
+                const norm = normalizeQty({ strips: rawStrips || 0, loose: rawLoose || 0, unitsPerStrip });
+                requestedQty = norm.totalUnits;
+                stripsQty = norm.strips;
+                looseQty = norm.loose;
             }
 
             if (isNaN(requestedQty) || requestedQty <= 0) {
@@ -473,7 +497,9 @@ exports.createSale = async (req, res) => {
             message: 'Sale completed successfully',
             saleId,
             invoiceNo: finalInvoiceNo,
-            sale: { id: saleId, invoice_no: finalInvoiceNo }
+            bill_type: finalBillType,
+            billType: finalBillType,
+            sale: { id: saleId, invoice_no: finalInvoiceNo, bill_type: finalBillType, billType: finalBillType }
         });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -490,6 +516,7 @@ exports.getSales = async (req, res) => {
         const adminId = req.adminId;
         const query = `
             SELECT s.id, s.total_amount, s.tax_amount, s.created_at, s.invoice_no, s.payment_mode,
+                   s.bill_type, s.bill_type as "billType",
                    c.name as customer_name, e.name as employee_name
             FROM SALES s
             LEFT JOIN CUSTOMERS c ON s.customer_id = c.id
@@ -527,6 +554,7 @@ exports.getSaleById = async (req, res) => {
         const itemsQuery = `
             SELECT si.*, m.medicine_name, m.brand_name, i.batch_number, i.expiry_date,
                    COALESCE(si.units_per_strip, m.units_per_strip, 1) as units_per_strip,
+                   COALESCE(m.unit_type, 'Strip') as unit_type,
                    COALESCE(si.strips_qty, 0) as strips_qty,
                    COALESCE(si.loose_qty, 0) as loose_qty
             FROM SALE_ITEMS si
@@ -537,11 +565,12 @@ exports.getSaleById = async (req, res) => {
         const itemsResult = await pool.query(itemsQuery, [id]);
         const items = itemsResult.rows.map(it => ({
             ...it,
-            formatted_qty: formatQty(it.qty, it.units_per_strip)
+            formatted_qty: formatQty(it.qty, it.units_per_strip, it.unit_type || 'Strip')
         }));
 
         res.json({
             ...saleResult.rows[0],
+            billType: saleResult.rows[0].bill_type || 'customer',
             items
         });
     } catch (error) {

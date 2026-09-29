@@ -47,6 +47,7 @@ const blankRow = () => ({
   strips: '',
   loose_qty: '',
   units_per_strip: 1,
+  unit_type: 'Strip',
   mrp: '',
   gst_pct: 12,
   disc_pct: '',
@@ -59,6 +60,7 @@ const blankRow = () => ({
 export default function POS() {
   const { user } = useStore();
   const [BILL_NO] = useState(billNo);
+  const [billType, setBillType] = useState('customer'); // 'customer' | 'wholesale'
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [validationAlert, setValidationAlert] = useState('');
 
@@ -88,6 +90,7 @@ export default function POS() {
           stock_qty: parseFloat(m.total_stock) || 0,
           tax_percentage: parseFloat(m.tax_percentage) || 12,
           units_per_strip: parseInt(m.units_per_strip, 10) || 1,
+          unit_type: m.unit_type || 'Strip',
           pack_size: m.pack_size || '1',
         };
       }).filter(m => m.label));
@@ -171,6 +174,7 @@ export default function POS() {
       inventory_id: med.inventory_id,
       stock_qty: med.stock_qty,
       units_per_strip: ups,
+      unit_type: med.unit_type || 'Strip',
       strips: initialStrips,
       loose_qty: initialLoose,
       qty: initialQty,
@@ -195,6 +199,7 @@ export default function POS() {
         inventory_id: matched.inventory_id,
         stock_qty: matched.stock_qty,
         units_per_strip: ups,
+        unit_type: matched.unit_type || 'Strip',
         strips: initialStrips,
         loose_qty: initialLoose,
         qty: initialQty,
@@ -265,7 +270,8 @@ export default function POS() {
         const available = r.stock_qty ?? inv?.stock_qty;
         if (available !== undefined && parseFloat(r.qty) > available) {
           const ups = r.units_per_strip || inv?.units_per_strip || 1;
-          setValidationAlert(`⚠️ Stock kam hai for "${r.name}". Available: ${formatQty(available, ups)}, Requested: ${formatQty(r.qty, ups)}`);
+          const uType = r.unit_type || inv?.unit_type || 'Strip';
+          setValidationAlert(`⚠️ Stock kam hai for "${r.name}". Available: ${formatQty(available, ups, uType)}, Requested: ${formatQty(r.qty, ups, uType)}`);
           setSaving(false);
           return;
         }
@@ -284,6 +290,7 @@ export default function POS() {
           strips_qty: ups > 1 ? norm.strips : 0,
           loose_qty: ups > 1 ? norm.loose : 0,
           units_per_strip: ups,
+          unit_type: r.unit_type || inv?.unit_type || 'Strip',
           free_qty: parseFloat(r.free_qty) || 0,
           price: parseFloat(r.mrp) || 0,
           selling_price: parseFloat(r.selling_price || r.mrp) || 0,
@@ -311,6 +318,8 @@ export default function POS() {
         invoice_no: BILL_NO,
         doctor_name: customer.doctor,
         rx_number: customer.prescription,
+        billType: billType,
+        bill_type: billType,
         items: invItems,
       });
       alert(`✅ Bill ${BILL_NO} saved successfully!`);
@@ -335,7 +344,7 @@ export default function POS() {
       return;
     }
     setValidationAlert('');
-    generateInvoicePDF(customer, computed.filter(r => r.name && r.qty && r.mrp), summary, paymentMode, BILL_NO, shop);
+    generateInvoicePDF(customer, computed.filter(r => r.name && r.qty && r.mrp), summary, paymentMode, BILL_NO, shop, billType);
   };
 
   const handleClearClick = () => {
@@ -363,16 +372,49 @@ export default function POS() {
       {/* ══════════════════ LEFT PANEL ══════════════════ */}
       <div className="flex-1 flex flex-col gap-5 min-w-0">
 
-        {/* Page Title */}
-        <div className="flex items-center gap-3">
-          <span className="inline-flex w-9 h-9 items-center justify-center rounded-xl bg-gradient-to-br from-green-700 to-green-500 shadow-lg shrink-0">
-            <ShoppingCart size={18} className="text-white" aria-hidden="true" />
-          </span>
-          <div>
-            <h1 className="text-xl font-bold text-gray-800 tracking-tight">Customer Billing</h1>
-            {/* P1: text-gray-500 -> text-gray-700 */}
-            <p className="text-xs text-gray-700">Bill # <span className="font-mono font-bold text-green-800">{BILL_NO}</span></p>
-            {inventoryError && <p className="text-xs text-red-700 mt-1" role="alert">{inventoryError}</p>}
+        {/* Page Title & Bill Format Toggle */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex w-9 h-9 items-center justify-center rounded-xl bg-gradient-to-br from-green-700 to-green-500 shadow-lg shrink-0">
+              <ShoppingCart size={18} className="text-white" aria-hidden="true" />
+            </span>
+            <div>
+              <h1 className="text-xl font-bold text-gray-800 tracking-tight">
+                {billType === 'wholesale' ? 'Wholesale Billing' : 'Customer Billing'}
+              </h1>
+              <p className="text-xs text-gray-700">Bill # <span className="font-mono font-bold text-green-800">{BILL_NO}</span></p>
+              {inventoryError && <p className="text-xs text-red-700 mt-1" role="alert">{inventoryError}</p>}
+            </div>
+          </div>
+
+          {/* Billing Format Toggle */}
+          <div className="inline-flex items-center p-1 bg-white rounded-xl border border-green-200 shadow-xs" role="radiogroup" aria-label="Billing Format">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={billType === 'customer'}
+              onClick={() => setBillType('customer')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all min-h-[36px] flex items-center gap-1.5 ${
+                billType === 'customer'
+                  ? 'bg-green-700 text-white shadow-sm'
+                  : 'text-gray-600 hover:text-green-800 hover:bg-green-50/50'
+              }`}
+            >
+              Customer Bill
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={billType === 'wholesale'}
+              onClick={() => setBillType('wholesale')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all min-h-[36px] flex items-center gap-1.5 ${
+                billType === 'wholesale'
+                  ? 'bg-green-700 text-white shadow-sm'
+                  : 'text-gray-600 hover:text-green-800 hover:bg-green-50/50'
+              }`}
+            >
+              Wholesale Bill
+            </button>
           </div>
         </div>
 
@@ -597,7 +639,7 @@ export default function POS() {
                         ) : (
                           <div className="flex flex-col items-center">
                             <span className="font-bold text-gray-800 tabular-nums">
-                              {row.units_per_strip > 1 ? formatQty(row.qty, row.units_per_strip) : `${row.qty} Units`}
+                              {formatQty(row.qty, row.units_per_strip, row.unit_type || 'Strip')}
                             </span>
                             {isOverstock && (
                               <span className="text-[10px] text-red-600 font-bold mt-0.5">

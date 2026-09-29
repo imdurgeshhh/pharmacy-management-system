@@ -69,4 +69,13 @@ describe('Frontend Quantity Helpers - Unit Tests', () => {
         expect(formatQty(5, 20)).toBe('5 Tab');
     });
 
+    it('formatQty correctly formats Syrup/Bottle, Bottle, Tube, Piece', () => {
+        expect(formatQty(1, 1, 'Syrup/Bottle')).toBe('1 Bottle');
+        expect(formatQty(1, 10, 'Syrup/Bottle')).toBe('1 Bottle');
+        expect(formatQty(3, 1, 'Bottle')).toBe('3 Bottle');
+        expect(formatQty(2, 1, 'Tube')).toBe('2 Tube');
+        expect(formatQty(4, 1, 'Piece')).toBe('4 Piece');
+        expect(formatQty(1, { units_per_strip: 10, unit_type: 'Syrup/Bottle' })).toBe('1 Bottle');
+    });
+
 });

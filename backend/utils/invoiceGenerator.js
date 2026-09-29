@@ -372,4 +372,182 @@ function generateInvoice(data, res) {
   return doc;
 }
 
+// Alias for wholesale bill — keeps the existing detailed layout
+const generateWholesaleBillPDF = generateInvoice;
+
+/**
+ * Generates a simplified Customer Bill PDF.
+ * Table columns: S.No. | Medicine Name | Quantity | MRP (GST Included)
+ * Summary: Subtotal, Discount, Grand Total only.
+ * Total in words shown at the bottom.
+ */
+function generateCustomerBillPDF(data, res) {
+  const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: true });
+
+  const invoiceNo = data.invoiceNo || 'SM000001';
+  const filename = `customer_bill_${invoiceNo}.pdf`;
+
+  if (res) {
+    if (typeof res.setHeader === 'function') {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    }
+    doc.pipe(res);
+  }
+
+  const store = data.store || {};
+  const shopName  = (store.shop_name || store.name || 'PHARMACY STORE').toUpperCase();
+  const shopAddr  = (store.address || '').toUpperCase();
+  const shopPhone = store.phone || '';
+  const shopGstin = store.gstin || '';
+  const dlNo      = store.dl_no || store.drug_licence_no || '';
+
+  // ── Page margins ──────────────────────────────────────────────────────
+  const lX = 30, rX = 565;
+  const pageW = 595.28;
+
+  // ── 1. HEADER BAND ────────────────────────────────────────────────────
+  doc.rect(lX, 10, rX - lX, 55).fillAndStroke('#1a5c2e', '#1a5c2e');
+
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(14);
+  doc.text(shopName, lX + 4, 16, { width: rX - lX - 8, align: 'center' });
+
+  doc.font('Helvetica').fontSize(7.5).fillColor('#d4edda');
+  let headerY = 31;
+  if (shopAddr) { doc.text(shopAddr, lX + 4, headerY, { width: rX - lX - 8, align: 'center' }); headerY += 10; }
+  const infoParts = [];
+  if (shopGstin) infoParts.push(`GSTIN: ${shopGstin}`);
+  if (shopPhone) infoParts.push(`Ph: ${shopPhone}`);
+  if (dlNo)      infoParts.push(`D.L.: ${dlNo}`);
+  if (infoParts.length) { doc.text(infoParts.join('   |   '), lX + 4, headerY, { width: rX - lX - 8, align: 'center' }); headerY += 10; }
+
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(9);
+  doc.text('CUSTOMER BILL', lX + 4, 55, { width: rX - lX - 8, align: 'center' });
+
+  // ── 2. BILL META ──────────────────────────────────────────────────────
+  let metaY = 72;
+  doc.fillColor('#000000').font('Helvetica').fontSize(8);
+
+  const dateStr = data.date || new Date().toLocaleDateString('en-GB');
+  const payMode = (data.paymentMode || 'CASH').toUpperCase();
+  const billNo  = data.invoiceNo || '';
+  const custName = data.customerName || 'Walk-in Customer';
+  const custPhone = data.customerPhone || '';
+
+  doc.font('Helvetica-Bold').text('Customer:  ', lX + 4, metaY, { continued: true });
+  doc.font('Helvetica').text(`${custName}${custPhone ? '  |  Ph: ' + custPhone : ''}`);
+  metaY += 12;
+
+  doc.font('Helvetica-Bold').text('Bill No:  ', lX + 4, metaY, { continued: true });
+  doc.font('Helvetica').text(billNo, { continued: true });
+  doc.text(`     Date: ${dateStr}`, { continued: true });
+  doc.text(`     Payment: ${payMode}`);
+  metaY += 8;
+
+  // Separator
+  doc.moveTo(lX, metaY).lineTo(rX, metaY).lineWidth(0.5).strokeColor('#cccccc').stroke();
+  metaY += 6;
+
+  // ── 3. ITEMS TABLE ────────────────────────────────────────────────────
+  const cols = [
+    { label: 'S.No.',                x: lX,       w: 32,  align: 'center' },
+    { label: 'Medicine Name',        x: lX + 32,  w: 260, align: 'left'   },
+    { label: 'Quantity',             x: lX + 292, w: 90,  align: 'center' },
+    { label: 'MRP (GST Included)',   x: lX + 382, w: rX - (lX + 382), align: 'right' },
+  ];
+
+  const hdrH = 18;
+  // Header background
+  doc.rect(lX, metaY, rX - lX, hdrH).fillAndStroke('#1a5c2e', '#1a5c2e');
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7.5);
+  cols.forEach(c => {
+    doc.text(c.label, c.x + 3, metaY + 4, { width: c.w - 6, align: c.align });
+  });
+
+  let rowY = metaY + hdrH;
+  const rowH = 15;
+  const items = Array.isArray(data.items) ? data.items : [];
+
+  let subTotal = 0;
+  let totalDisc = parseFloat(data.summary?.discountAmount || 0);
+  const { formatQty: fmtQty } = require('./quantity');
+
+  const processedItems = items.map((it, idx) => {
+    const qty  = parseFloat(it.qty) || 0;
+    const sellingPrice = parseFloat(it.selling_price || it.mrp || it.price || 0);
+    const gstPct = it.gstPct !== undefined && it.gstPct !== null ? parseFloat(it.gstPct) : (parseFloat(it.tax) || 12);
+    const effectiveGstPct = gstPct > 0 ? gstPct : 12;
+    // MRP (GST Included) = Selling Price + 12% GST
+    const mrpGstIncl = +(sellingPrice * (1 + effectiveGstPct / 100)).toFixed(2);
+    const lineTotal  = +(mrpGstIncl * qty).toFixed(2);
+    subTotal += lineTotal;
+
+    const ups = parseInt(it.unitsPerStrip || it.units_per_strip || 1, 10) || 1;
+    const unitType = it.unitType || it.unit_type || 'Strip';
+    const qtyStr = fmtQty(qty, ups, unitType);
+
+    return { idx: idx + 1, name: it.medicineName || it.medicine_name || it.name || 'Medicine', qtyStr, mrpGstIncl, lineTotal };
+  });
+
+  processedItems.forEach((it, i) => {
+    const fillColor = i % 2 === 0 ? '#f9fdf9' : '#ffffff';
+    doc.rect(lX, rowY, rX - lX, rowH).fill(fillColor);
+    doc.fillColor('#222222').font('Helvetica').fontSize(7.5);
+    doc.text(String(it.idx),            cols[0].x + 3, rowY + 3, { width: cols[0].w - 6, align: cols[0].align });
+    doc.text(it.name,                   cols[1].x + 3, rowY + 3, { width: cols[1].w - 6, align: cols[1].align });
+    doc.text(it.qtyStr,                 cols[2].x + 3, rowY + 3, { width: cols[2].w - 6, align: cols[2].align });
+    doc.text(`Rs. ${it.mrpGstIncl.toFixed(2)}`, cols[3].x + 3, rowY + 3, { width: cols[3].w - 6, align: cols[3].align });
+    rowY += rowH;
+  });
+
+  // Table bottom line
+  doc.moveTo(lX, rowY).lineTo(rX, rowY).lineWidth(0.5).strokeColor('#1a5c2e').stroke();
+  rowY += 8;
+
+  // ── 4. SUMMARY ────────────────────────────────────────────────────────
+  const grandTotal = +(subTotal - totalDisc).toFixed(2);
+
+  const sumX = rX - 170;
+  const labelW = 90, valW = 75;
+
+  const sumLines = [
+    { label: 'Subtotal',    val: `Rs. ${subTotal.toFixed(2)}`, bold: false },
+    { label: 'Discount',    val: `- Rs. ${totalDisc.toFixed(2)}`, bold: false },
+    { label: 'Grand Total', val: `Rs. ${grandTotal.toFixed(2)}`,  bold: true  },
+  ];
+
+  sumLines.forEach(sl => {
+    if (sl.bold) {
+      doc.rect(sumX - 5, rowY - 1, rX - sumX + 5, 14).fill('#1a5c2e');
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
+    } else {
+      doc.fillColor('#333333').font(sl.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8);
+    }
+    doc.text(sl.label, sumX, rowY + 2, { width: labelW, align: 'left' });
+    doc.text(sl.val, sumX + labelW, rowY + 2, { width: valW, align: 'right' });
+    rowY += 14;
+  });
+
+  rowY += 6;
+
+  // ── 5. AMOUNT IN WORDS ────────────────────────────────────────────────
+  const wordsStr = numberToWords(grandTotal);
+  doc.fillColor('#000000').font('Helvetica-Bold').fontSize(7.5);
+  doc.text('Amount in Words: ', lX + 4, rowY, { continued: true });
+  doc.font('Helvetica').text(wordsStr, { width: rX - lX - 8, ellipsis: true });
+  rowY += 16;
+
+  // ── 6. FOOTER ─────────────────────────────────────────────────────────
+  doc.font('Helvetica').fontSize(6.5).fillColor('#666666');
+  doc.text('Terms: Medicines without valid prescription will not be accepted back. Keep out of reach of children.', lX + 4, rowY, { width: rX - lX - 8 });
+  rowY += 10;
+  doc.font('Helvetica-Bold').fontSize(7).fillColor('#1a5c2e');
+  doc.text('Thank you! Get well soon!', lX + 4, rowY, { width: rX - lX - 8, align: 'center' });
+
+  doc.end();
+  return doc;
+}
+
 module.exports = generateInvoice;
+module.exports.generateWholesaleBillPDF = generateWholesaleBillPDF;
+module.exports.generateCustomerBillPDF  = generateCustomerBillPDF;

@@ -111,4 +111,51 @@ describe('components/purchases/PurchaseItemsTable.jsx', () => {
     fireEvent.click(saveBtn);
     expect(handleSave).not.toHaveBeenCalled();
   });
+
+  it('renders MRP input field right next to Qty, accepts decimal input, and includes MRP in submitted data', () => {
+    const handleSave = vi.fn();
+    const onUpdateMrp = vi.fn();
+    render(<PurchaseItemsTable entries={mockEntries} onSave={handleSave} onUpdateMrp={onUpdateMrp} />);
+
+    // Verify MRP column header exists
+    expect(screen.getByRole('columnheader', { name: 'MRP' })).toBeInTheDocument();
+
+    // Verify MRP input fields render for each row
+    const mrpInputs = screen.getAllByRole('spinbutton', { name: /MRP for/i });
+    expect(mrpInputs).toHaveLength(mockEntries.length);
+
+    // Enter decimal MRP value (e.g. 125.25)
+    fireEvent.change(mrpInputs[0], { target: { value: '125.25' } });
+    expect(mrpInputs[0]).toHaveValue(125.25);
+    expect(onUpdateMrp).toHaveBeenCalledWith(0, '125.25');
+
+    // Click Save Stock Entry
+    const saveBtn = screen.getByRole('button', { name: /Save Stock Entry/i });
+    fireEvent.click(saveBtn);
+
+    // Verify handleSave received the updated purchase items including the entered mrp
+    expect(handleSave).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          medicine_name: 'Paracetamol 500mg',
+          mrp: '125.25',
+        }),
+        expect.objectContaining({
+          medicine_name: 'Azithromycin 500mg',
+        }),
+      ])
+    );
+  });
+
+  it('pre-fills MRP field when entry already has an mrp value', () => {
+    const entriesWithMrp = [
+      {
+        ...mockEntries[0],
+        mrp: 140.50,
+      }
+    ];
+    render(<PurchaseItemsTable entries={entriesWithMrp} />);
+    const mrpInput = screen.getByRole('spinbutton', { name: /MRP for Paracetamol 500mg/i });
+    expect(mrpInput).toHaveValue(140.50);
+  });
 });

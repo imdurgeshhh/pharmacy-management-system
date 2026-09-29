@@ -87,11 +87,45 @@ function lineAmount(totalUnits = 0, stripPrice = 0, unitsPerStrip = 1) {
 
 /**
  * Formats quantity for display in UI, invoices, and reports.
- * E.g., "1 Strip + 10 Tab (30 tab)" or "2 Strip (40 tab)" or "5 Tab".
+ * E.g., "1 Strip + 10 Tab (30 tab)", "2 Strip (40 tab)", "5 Tab", "1 Bottle", "2 Tube".
+ *
+ * When unit_type is 'Syrup/Bottle', 'Bottle', or 'Syrup', returns e.g. "1 Bottle".
  */
-function formatQty(totalUnits = 0, unitsPerStrip = 1) {
-    const ups = Math.max(1, parseInt(unitsPerStrip, 10) || 1);
+function formatQty(totalUnits = 0, unitsPerStrip = 1, unitType = 'Strip') {
+    let ups = unitsPerStrip;
+    let ut = unitType;
+
+    if (typeof unitsPerStrip === 'object' && unitsPerStrip !== null) {
+        ut = unitsPerStrip.unit_type ||
+             unitsPerStrip.unitType ||
+             unitsPerStrip.dosage_form ||
+             unitsPerStrip.dosageForm ||
+             unitsPerStrip.category ||
+             unitsPerStrip.medicine_category ||
+             (typeof unitsPerStrip.name === 'string' && /syrup|suspension|drops/i.test(unitsPerStrip.name) ? 'Syrup/Bottle' : null) ||
+             unitType;
+        ups = unitsPerStrip.units_per_strip || unitsPerStrip.unitsPerStrip || 1;
+    }
+
+    ups = Math.max(1, parseInt(ups, 10) || 1);
     const total = Math.max(0, parseInt(totalUnits, 10) || 0);
+    const normalizedUnitType = (ut || '').toString().trim().toLowerCase();
+
+    if (
+        normalizedUnitType === 'syrup/bottle' ||
+        normalizedUnitType === 'bottle' ||
+        normalizedUnitType === 'syrup' ||
+        normalizedUnitType.includes('syrup') ||
+        normalizedUnitType.includes('bottle')
+    ) {
+        return `${total} Bottle`;
+    }
+    if (normalizedUnitType === 'tube' || normalizedUnitType.includes('tube')) {
+        return `${total} Tube`;
+    }
+    if (normalizedUnitType === 'piece' || normalizedUnitType.includes('piece')) {
+        return `${total} Piece`;
+    }
 
     if (ups <= 1) {
         return `${total} Units`;

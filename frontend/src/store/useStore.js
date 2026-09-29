@@ -30,6 +30,7 @@ export const defaultPurchaseForm = () => ({
     qty: '',
     price: '',
     selling_price: '',
+    mrp: '',
     gst_pct: 12,
     disc_pct: '',
     is_new: true,

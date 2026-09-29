@@ -42,6 +42,7 @@ exports.getInventory = async (req, res) => {
                 m.hsn_code,
                 m.pack_size,
                 COALESCE(m.units_per_strip, 1) AS units_per_strip,
+                COALESCE(m.unit_type, 'Strip') AS unit_type,
                 m.admin_id,
                 COALESCE(SUM(i.stock_qty), 0) as total_stock,
                 COALESCE(
@@ -68,7 +69,7 @@ exports.getInventory = async (req, res) => {
         const result = await pool.query(query, params);
         const rows = result.rows.map(r => ({
             ...r,
-            formatted_stock: formatQty(r.total_stock, r.units_per_strip)
+            formatted_stock: formatQty(r.total_stock, r.units_per_strip, r.unit_type || 'Strip')
         }));
         res.json(rows);
     } catch (error) {
@@ -94,7 +95,8 @@ exports.addMedicine = async (req, res) => {
         schedule,
         hsn_code,
         pack_size,
-        units_per_strip
+        units_per_strip,
+        unit_type
     } = req.body;
 
     const medName = medicine_name || name;
@@ -105,21 +107,25 @@ exports.addMedicine = async (req, res) => {
         medSchedule = 'NONE';
     }
     const unitsPerStrip = Math.max(1, parseInt(units_per_strip, 10) || 1);
+    // Derive default unit_type from dosage_form when not explicitly provided
+    const SINGLE_UNIT_FORMS = ['syrup', 'injection', 'drops', 'cream', 'gel', 'lotion', 'spray', 'ointment', 'powder', 'inhaler', 'bottle'];
+    const derivedUnitType = unit_type ||
+        (SINGLE_UNIT_FORMS.includes((dosage_form || '').toLowerCase()) ? 'Syrup/Bottle' : 'Strip');
 
     try {
         const result = await pool.query(
             `INSERT INTO MEDICINES (
                 medicine_name, name, brand_name, salt_composition, 
                 medicine_category, category, dosage_form, strength, 
-                barcode, description, schedule, hsn_code, pack_size, units_per_strip, admin_id
+                barcode, description, schedule, hsn_code, pack_size, units_per_strip, unit_type, admin_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING *`,
             [
                 medName, medName, brand_name, salt_composition,
                 medCategory, medCategory, dosage_form, strength,
                 barcode || null, description, medSchedule, hsn_code || '3004', pack_size || '1',
-                unitsPerStrip,
+                unitsPerStrip, derivedUnitType,
                 adminId
             ]
         );
@@ -192,7 +198,8 @@ exports.updateMedicine = async (req, res) => {
         schedule,
         hsn_code,
         pack_size,
-        units_per_strip
+        units_per_strip,
+        unit_type
     } = req.body;
 
     const medName = medicine_name || name;
@@ -205,6 +212,11 @@ exports.updateMedicine = async (req, res) => {
     const parsedUnitsPerStrip = units_per_strip !== undefined && units_per_strip !== null
         ? Math.max(1, parseInt(units_per_strip, 10) || 1)
         : null;
+    const SINGLE_UNIT_FORMS = ['syrup', 'injection', 'drops', 'cream', 'gel', 'lotion', 'spray', 'ointment', 'powder', 'inhaler', 'bottle', 'suspension'];
+    let parsedUnitType = unit_type !== undefined && unit_type !== null ? unit_type : null;
+    if (!parsedUnitType && dosage_form && SINGLE_UNIT_FORMS.includes(dosage_form.toLowerCase())) {
+        parsedUnitType = 'Syrup/Bottle';
+    }
 
     try {
         if (parsedUnitsPerStrip !== null) {
@@ -237,13 +249,14 @@ exports.updateMedicine = async (req, res) => {
                 schedule=COALESCE($11, schedule),
                 hsn_code=COALESCE($12, hsn_code),
                 pack_size=COALESCE($13, pack_size),
-                units_per_strip=COALESCE($14, units_per_strip)
-             WHERE id=$15 AND admin_id=$16 RETURNING *`,
+                units_per_strip=COALESCE($14, units_per_strip),
+                unit_type=COALESCE($15, unit_type)
+             WHERE id=$16 AND admin_id=$17 RETURNING *`,
             [
                 medName, medName, brand_name, salt_composition,
                 medCategory, medCategory, dosage_form, strength,
                 barcode, description, medSchedule || null, hsn_code || null,
-                pack_size || null, parsedUnitsPerStrip, id, adminId
+                pack_size || null, parsedUnitsPerStrip, parsedUnitType, id, adminId
             ]
         );
         if (result.rows.length === 0) {
@@ -301,6 +314,7 @@ exports.getAlerts = async (req, res) => {
                 COALESCE(m.medicine_name, m.name) AS name,
                 COALESCE(m.medicine_name, m.name) AS medicine_name,
                 COALESCE(m.units_per_strip, 1) AS units_per_strip,
+                COALESCE(m.unit_type, 'Strip') AS unit_type,
                 i.batch_number, 
                 i.stock_qty, 
                 i.expiry_date,
@@ -316,7 +330,7 @@ exports.getAlerts = async (req, res) => {
         const result = await pool.query(query, [adminId]);
         const rows = result.rows.map(r => ({
             ...r,
-            formatted_stock: formatQty(r.stock_qty, r.units_per_strip)
+            formatted_stock: formatQty(r.stock_qty, r.units_per_strip, r.unit_type || 'Strip')
         }));
         res.json(rows);
     } catch (error) {

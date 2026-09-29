@@ -17,13 +17,32 @@ const PurchaseItemsTable = ({
   onDeleteRow,
   onClearAll,
   onSave,
+  onUpdateMrp,
   saving = false,
   rupee = defaultRupee,
 }) => {
   const [deleteConfirmIdx, setDeleteConfirmIdx] = useState(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [localEntries, setLocalEntries] = useState(entries);
 
-  const totalQty = entries.reduce((s, e) => s + (parseFloat(e.qty) || 0), 0);
+  React.useEffect(() => {
+    setLocalEntries(entries);
+  }, [entries]);
+
+  const handleMrpChange = (idx, value) => {
+    const updated = localEntries.map((item, i) => {
+      if (i === idx) {
+        return { ...item, mrp: value };
+      }
+      return item;
+    });
+    setLocalEntries(updated);
+    if (onUpdateMrp) {
+      onUpdateMrp(idx, value);
+    }
+  };
+
+  const totalQty = localEntries.reduce((s, e) => s + (parseFloat(e.qty) || 0), 0);
 
   return (
     <div className="rounded-2xl bg-white border border-green-100 shadow-md overflow-hidden">
@@ -33,12 +52,12 @@ const PurchaseItemsTable = ({
             <ClipboardList size={17} aria-hidden="true" />
           </span>
           <h2 className="text-sm font-bold text-white tracking-wide">
-            Stock Entry List{entries.length > 0 ? ` (${entries.length})` : ''}
+            Stock Entry List{localEntries.length > 0 ? ` (${localEntries.length})` : ''}
           </h2>
         </div>
       </div>
 
-      {entries.length === 0 ? (
+      {localEntries.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-14 text-gray-300">
           <ClipboardList size={44} className="mb-3 opacity-40" aria-hidden="true" />
           <p className="text-sm text-gray-700 font-medium">No entries yet — add medicines above.</p>
@@ -46,16 +65,16 @@ const PurchaseItemsTable = ({
       ) : (
         <>
           <div className="overflow-x-auto no-scrollbar" tabIndex={0} role="region" aria-label="Stock entry list">
-            <table className="w-full text-xs text-left" style={{ minWidth: 1020 }}>
+            <table className="w-full text-xs text-left" style={{ minWidth: 1100 }}>
               <thead className="bg-green-50 border-b border-green-100 text-green-950 uppercase tracking-wider font-bold">
                 <tr>
-                  {['#', 'Medicine', 'Schedule', 'Batch', 'Expiry', 'Qty', 'Cost Price', 'Selling Price', 'GST%', 'Tax', 'Disc%', 'Disc', 'Final', 'Actions'].map(h => (
+                  {['#', 'Medicine', 'Schedule', 'Batch', 'Expiry', 'Qty', 'MRP', 'Cost Price', 'Selling Price', 'GST%', 'Tax', 'Disc%', 'Disc', 'Final', 'Actions'].map(h => (
                     <th key={h} scope="col" className="px-3 py-3 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-green-50">
-                {entries.map((e, i) => (
+                {localEntries.map((e, i) => (
                   <tr key={i} className={`transition-colors ${editIdx === i ? 'bg-amber-50' : 'hover:bg-green-50/40'}`}>
                     <td className="px-3 py-2.5 font-bold text-gray-500 tabular-nums">{i + 1}</td>
                     <td className="px-3 py-2.5 max-w-[160px] truncate" title={e.medicine_name}>
@@ -95,6 +114,28 @@ const PurchaseItemsTable = ({
                         </div>
                       )}
                     </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <div className="relative min-w-[95px] max-w-[115px]">
+                        <label htmlFor={`row-mrp-${i}`} className="sr-only">
+                          MRP for {e.medicine_name || `row ${i + 1}`}
+                        </label>
+                        <div className="relative flex items-center">
+                          <span className="absolute left-2 text-gray-500 font-medium text-xs pointer-events-none select-none">₹</span>
+                          <input
+                            id={`row-mrp-${i}`}
+                            name={`mrp-${i}`}
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={e.mrp !== undefined && e.mrp !== null ? e.mrp : ''}
+                            onChange={(ev) => handleMrpChange(i, ev.target.value)}
+                            placeholder="0.00"
+                            aria-label={`MRP for ${e.medicine_name || `row ${i + 1}`}`}
+                            className="w-full pl-5 pr-2 py-1.5 text-xs font-mono font-semibold rounded-lg border border-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:border-green-600 text-gray-900 bg-white shadow-sm"
+                          />
+                        </div>
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5 font-mono text-gray-700 tabular-nums">{rupee(e.price)}</td>
                     <td className="px-3 py-2.5 font-mono text-green-700 font-semibold tabular-nums">{rupee(e.selling_price !== undefined ? e.selling_price : (e.mrp || e.price))}</td>
                     <td className="px-3 py-2.5 text-center">
@@ -133,7 +174,7 @@ const PurchaseItemsTable = ({
           {/* Bottom Toolbar */}
           <div className="px-6 py-4 border-t border-green-100 bg-green-50/30 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-gray-700">
-              <span className="font-bold text-gray-800 tabular-nums">{entries.length}</span> medicine{entries.length > 1 ? 's' : ''} ·{' '}
+              <span className="font-bold text-gray-800 tabular-nums">{localEntries.length}</span> medicine{localEntries.length > 1 ? 's' : ''} ·{' '}
               Total qty: <span className="font-bold tabular-nums">{totalQty}</span>
             </p>
             <div className="flex gap-3">
@@ -146,7 +187,7 @@ const PurchaseItemsTable = ({
               </button>
               <button
                 type="button"
-                onClick={onSave}
+                onClick={() => onSave(localEntries)}
                 disabled={saving}
                 className="flex items-center gap-1.5 px-6 py-2 min-h-[44px] rounded-xl bg-green-700 text-white text-sm font-semibold hover:bg-green-800 shadow-md shadow-green-200 active:scale-[0.96] transition-[background-color,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:opacity-60"
               >

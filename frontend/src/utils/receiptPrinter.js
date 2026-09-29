@@ -19,8 +19,10 @@ export function generateInvoicePDF(
   summary = {},
   paymentMode = 'Cash',
   bNo = '',
-  shop = getShopProfile()
+  shop = getShopProfile(),
+  billType = 'wholesale'
 ) {
+  const isCustomerBill = billType === 'customer';
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const W = doc.internal.pageSize.width;
   const H = doc.internal.pageSize.height;
@@ -52,7 +54,7 @@ export function generateInvoicePDF(
   if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
   if (shopPhone) contactParts.push(`Ph: ${shopPhone}`);
   if (shopEmail) contactParts.push(`Email: ${shopEmail}`);
-  const contactLine = contactParts.length > 0 ? contactParts.join('  |  ') : (shopDlNo ? '' : 'TAX INVOICE');
+  const contactLine = contactParts.length > 0 ? contactParts.join('  |  ') : (shopDlNo ? '' : (isCustomerBill ? 'CUSTOMER BILL' : 'TAX INVOICE'));
 
   if (contactLine) {
     doc.text(contactLine, W / 2, 45, { align: 'center' });
@@ -64,7 +66,7 @@ export function generateInvoicePDF(
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
-  doc.text('TAX INVOICE', W / 2, bannerHeight - 6, { align: 'center' });
+  doc.text(isCustomerBill ? 'CUSTOMER BILL' : 'TAX INVOICE / WHOLESALE BILL', W / 2, bannerHeight - 6, { align: 'center' });
 
   // 2. Customer & Bill Details
   doc.setTextColor(50, 50, 50);
@@ -111,91 +113,173 @@ export function generateInvoicePDF(
 
   const tableY = Math.max(curLeftY, curRightY) + 6;
 
-  // 3. Medicine Items Table
-  autoTable(doc, {
-    startY: tableY,
-    head: [['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt']],
-    body: rows.map((r, i) => {
+  let sumY;
+  let rX = W - 40;
+  let fy;
+
+  if (isCustomerBill) {
+    // ── 3. Medicine Items Table (Customer Bill: 4 columns only) ─────────────
+    let customerSubTotal = 0;
+    const bodyRows = rows.map((r, i) => {
       const ups = parseInt(r.units_per_strip, 10) || 1;
       const totalUnits = parseInt(r.qty, 10) || 0;
       const nameDesc = r.name || r.particulars || r.medicine_name || 'Medicine';
-      const qtyStr = ups > 1 ? formatQty(totalUnits, ups) : r.qty;
+      const unitType = (r.unit_type || r.unitType || '').toLowerCase();
+      const isSpecialUnit = unitType.includes('bottle') || unitType.includes('syrup') || unitType.includes('tube') || unitType.includes('piece');
+      const qtyStr = (ups > 1 || isSpecialUnit) ? formatQty(totalUnits, ups, r.unit_type || r.unitType || 'Strip') : r.qty;
+      const sellingPrice = parseFloat(r.selling_price || r.mrp || 0);
+      const gstPct = r.gst_pct !== undefined && r.gst_pct !== null ? parseFloat(r.gst_pct) : 12;
+      const effectiveGstPct = gstPct > 0 ? gstPct : 12;
+      // MRP (GST Included) = Selling Price + 12% GST
+      const mrpGstIncl = +(sellingPrice * (1 + effectiveGstPct / 100)).toFixed(2);
+      customerSubTotal += +(mrpGstIncl * totalUnits).toFixed(2);
       return [
         i + 1,
         nameDesc,
-        r.hsn_code || r.hsn || '3004',
         qtyStr,
-        fmt(r.selling_price || r.mrp),
-        `${r.disc_pct || 0}%`,
-        fmt(r.disc_amt),
-        `${r.gst_pct || 0}%`,
-        fmt(r.tax_amt),
-        fmt(r.net_amt)
+        fmt(mrpGstIncl)
       ];
-    }),
-    headStyles: { fillColor: [46, 125, 50], textColor: 255, fontSize: 7, fontStyle: 'bold' },
-    bodyStyles: { fontSize: 7.5 },
-    alternateRowStyles: { fillColor: [240, 255, 240] },
-    styles: { cellPadding: 3 },
-  });
+    });
 
-  // 4. Summary & Tax Breakup Box
-  const fy = (doc.lastAutoTable?.finalY || tableY + 50) + 10;
-  const rX = W - 40;
-  doc.setFontSize(8);
-  doc.setTextColor(80, 80, 80);
+    autoTable(doc, {
+      startY: tableY,
+      head: [['S.No.', 'Medicine Name', 'Quantity', 'MRP (GST Included)']],
+      body: bodyRows,
+      headStyles: { fillColor: [46, 125, 50], textColor: 255, fontSize: 8, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [240, 255, 240] },
+      styles: { cellPadding: 4 },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 40 },
+        1: { halign: 'left' },
+        2: { halign: 'center', cellWidth: 90 },
+        3: { halign: 'right', cellWidth: 120 }
+      }
+    });
 
-  let sumY = fy + 12;
-  doc.text('Subtotal:', rX - 100, sumY, { align: 'right' });
-  doc.text(fmt(summary.subtotal), rX, sumY, { align: 'right' });
-  sumY += 12;
+    // ── 4. Summary: ONLY Subtotal, Discount, Grand Total ───────────────────
+    fy = (doc.lastAutoTable?.finalY || tableY + 50) + 12;
+    doc.setFontSize(8.5);
+    doc.setTextColor(60, 60, 60);
 
-  doc.text('Discount:', rX - 100, sumY, { align: 'right' });
-  doc.text(`- ${fmt(summary.totalDiscount)}`, rX, sumY, { align: 'right' });
-  sumY += 12;
+    const totalDisc = Math.abs(Number(summary.totalDiscount) || 0);
+    const usedSubTotal = customerSubTotal > 0 ? customerSubTotal : (Number(summary.subtotal) || 0);
+    const grandTotal = +(usedSubTotal - totalDisc).toFixed(2);
 
-  // CGST / SGST vs IGST
-  const totalGST = Number(summary.totalGST) || 0;
-  const storeState = shopGstin ? String(shopGstin).trim().slice(0, 2) : '';
-  const customerState = customer.gst ? String(customer.gst).trim().slice(0, 2) : '';
-  const isInterState = Boolean(storeState && customerState && storeState !== customerState);
+    sumY = fy + 12;
+    doc.text('Subtotal:', rX - 100, sumY, { align: 'right' });
+    doc.text(fmt(usedSubTotal), rX, sumY, { align: 'right' });
+    sumY += 14;
 
-  if (isInterState) {
-    doc.text('IGST:', rX - 100, sumY, { align: 'right' });
-    doc.text(fmt(totalGST), rX, sumY, { align: 'right' });
-    sumY += 12;
+    doc.text('Discount:', rX - 100, sumY, { align: 'right' });
+    doc.text(`- ${fmt(totalDisc)}`, rX, sumY, { align: 'right' });
+    sumY += 14;
+
+    // Grand Total Highlight
+    doc.setFillColor(46, 125, 50);
+    doc.roundedRect(rX - 150, sumY, 152, 22, 3, 3, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(`Grand Total: ${fmt(grandTotal)}`, rX - 74, sumY + 15, { align: 'center' });
+
+    // Amount in Words
+    const amountWords = numberToWords(grandTotal || 0);
+    doc.setFontSize(8);
+    doc.setTextColor(50, 50, 50);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Amount in Words:', 40, fy + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(amountWords, 40, fy + 24, { maxWidth: W - 230 });
+
   } else {
-    const halfGst = totalGST / 2;
-    doc.text('CGST:', rX - 100, sumY, { align: 'right' });
-    doc.text(fmt(halfGst), rX, sumY, { align: 'right' });
+    // ── 3. Medicine Items Table (Wholesale Bill: full 10 columns) ───────────
+    autoTable(doc, {
+      startY: tableY,
+      head: [['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt']],
+      body: rows.map((r, i) => {
+        const ups = parseInt(r.units_per_strip, 10) || 1;
+        const totalUnits = parseInt(r.qty, 10) || 0;
+        const nameDesc = r.name || r.particulars || r.medicine_name || 'Medicine';
+        const unitType = (r.unit_type || r.unitType || '').toLowerCase();
+        const isSpecialUnit = unitType.includes('bottle') || unitType.includes('syrup') || unitType.includes('tube') || unitType.includes('piece');
+        const qtyStr = (ups > 1 || isSpecialUnit) ? formatQty(totalUnits, ups, r.unit_type || r.unitType || 'Strip') : r.qty;
+        return [
+          i + 1,
+          nameDesc,
+          r.hsn_code || r.hsn || '3004',
+          qtyStr,
+          fmt(r.selling_price || r.mrp),
+          `${r.disc_pct || 0}%`,
+          fmt(r.disc_amt),
+          `${r.gst_pct || 0}%`,
+          fmt(r.tax_amt),
+          fmt(r.net_amt)
+        ];
+      }),
+      headStyles: { fillColor: [46, 125, 50], textColor: 255, fontSize: 7, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 7.5 },
+      alternateRowStyles: { fillColor: [240, 255, 240] },
+      styles: { cellPadding: 3 },
+    });
+
+    // ── 4. Summary & Tax Breakup Box (Wholesale Bill) ───────────────────────
+    fy = (doc.lastAutoTable?.finalY || tableY + 50) + 10;
+    doc.setFontSize(8);
+    doc.setTextColor(80, 80, 80);
+
+    sumY = fy + 12;
+    doc.text('Subtotal:', rX - 100, sumY, { align: 'right' });
+    doc.text(fmt(summary.subtotal), rX, sumY, { align: 'right' });
     sumY += 12;
-    doc.text('SGST:', rX - 100, sumY, { align: 'right' });
-    doc.text(fmt(halfGst), rX, sumY, { align: 'right' });
+
+    doc.text('Discount:', rX - 100, sumY, { align: 'right' });
+    doc.text(`- ${fmt(summary.totalDiscount)}`, rX, sumY, { align: 'right' });
     sumY += 12;
+
+    // CGST / SGST vs IGST
+    const totalGST = Number(summary.totalGST) || 0;
+    const storeState = shopGstin ? String(shopGstin).trim().slice(0, 2) : '';
+    const customerState = customer.gst ? String(customer.gst).trim().slice(0, 2) : '';
+    const isInterState = Boolean(storeState && customerState && storeState !== customerState);
+
+    if (isInterState) {
+      doc.text('IGST:', rX - 100, sumY, { align: 'right' });
+      doc.text(fmt(totalGST), rX, sumY, { align: 'right' });
+      sumY += 12;
+    } else {
+      const halfGst = totalGST / 2;
+      doc.text('CGST:', rX - 100, sumY, { align: 'right' });
+      doc.text(fmt(halfGst), rX, sumY, { align: 'right' });
+      sumY += 12;
+      doc.text('SGST:', rX - 100, sumY, { align: 'right' });
+      doc.text(fmt(halfGst), rX, sumY, { align: 'right' });
+      sumY += 12;
+    }
+
+    if (summary.roundOff_amt) {
+      doc.text('Round Off:', rX - 100, sumY, { align: 'right' });
+      doc.text(fmt(summary.roundOff_amt), rX, sumY, { align: 'right' });
+      sumY += 12;
+    }
+
+    // Grand Total Highlight
+    doc.setFillColor(46, 125, 50);
+    doc.roundedRect(rX - 150, sumY, 152, 20, 3, 3, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(`Grand Total: ${fmt(summary.grandTotal)}`, rX - 74, sumY + 13, { align: 'center' });
+
+    // Amount in Words
+    const amountWords = numberToWords(summary.grandTotal || 0);
+    doc.setFontSize(8);
+    doc.setTextColor(50, 50, 50);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Amount in Words:', 40, fy + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(amountWords, 40, fy + 24, { maxWidth: W - 230 });
   }
-
-  if (summary.roundOff_amt) {
-    doc.text('Round Off:', rX - 100, sumY, { align: 'right' });
-    doc.text(fmt(summary.roundOff_amt), rX, sumY, { align: 'right' });
-    sumY += 12;
-  }
-
-  // Grand Total Highlight
-  doc.setFillColor(46, 125, 50);
-  doc.roundedRect(rX - 150, sumY, 152, 20, 3, 3, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text(`Grand Total: ${fmt(summary.grandTotal)}`, rX - 74, sumY + 13, { align: 'center' });
-
-  // 5. Amount in Words (on the left side across from summary)
-  const amountWords = numberToWords(summary.grandTotal || 0);
-  doc.setFontSize(8);
-  doc.setTextColor(50, 50, 50);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Amount in Words:', 40, fy + 12);
-  doc.setFont('helvetica', 'normal');
-  doc.text(amountWords, 40, fy + 24, { maxWidth: W - 230 });
 
   // 6. Dispensed By / Pharmacist Signatory
   const signatoryY = sumY + 35;
@@ -232,4 +316,11 @@ export function generateInvoicePDF(
   doc.save(`Invoice_${bNo || 'bill'}.pdf`);
 }
 
+export const generateWholesaleBillPDF = (customer, rows, summary, paymentMode, bNo, shop) =>
+  generateInvoicePDF(customer, rows, summary, paymentMode, bNo, shop, 'wholesale');
+
+export const generateCustomerBillPDF = (customer, rows, summary, paymentMode, bNo, shop) =>
+  generateInvoicePDF(customer, rows, summary, paymentMode, bNo, shop, 'customer');
+
 export default generateInvoicePDF;
+

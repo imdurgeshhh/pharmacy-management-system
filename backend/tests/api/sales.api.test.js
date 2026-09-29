@@ -246,4 +246,59 @@ test('Module: sales', async (t) => {
     const res = await request(app).post('/api/sales/invoice/preview').send(payload);
     assert.ok([200, 500].includes(res.status), `Preview endpoint returned ${res.status}`);
   });
+
+  await t.test('POST /sales with billType wholesale and customer formats', async () => {
+    auth.asAdmin();
+    await db.query('UPDATE INVENTORY SET stock_qty = 100 WHERE id = $1', [invBatch.id]);
+
+    // 1. Wholesale sale
+    const wsRes = await request(app)
+      .post('/api/sales')
+      .send({
+        ...validSalePayload(),
+        billType: 'wholesale'
+      })
+      .expect(201);
+    assert.equal(wsRes.body.billType, 'wholesale');
+    assert.equal(wsRes.body.bill_type, 'wholesale');
+
+    const wsInvoice = await request(app).get(`/api/sales/invoice/${wsRes.body.saleId}`).expect(200);
+    assert.ok(wsInvoice.headers['content-type']?.includes('pdf'));
+
+    // 2. Customer sale
+    const custRes = await request(app)
+      .post('/api/sales')
+      .send({
+        ...validSalePayload(),
+        billType: 'customer'
+      })
+      .expect(201);
+    assert.equal(custRes.body.billType, 'customer');
+    assert.equal(custRes.body.bill_type, 'customer');
+
+    const custInvoice = await request(app).get(`/api/sales/invoice/${custRes.body.saleId}`).expect(200);
+    assert.ok(custInvoice.headers['content-type']?.includes('pdf'));
+
+    // 3. Preview for both formats
+    const prevCust = await request(app)
+      .post('/api/sales/invoice/preview')
+      .send({
+        billType: 'customer',
+        items: [{ name: 'Amoxicillin', qty: 1, mrp: 50, selling_price: 50, units_per_strip: 1 }],
+        payment_mode: 'Cash'
+      })
+      .expect(200);
+    assert.ok(prevCust.headers['content-type']?.includes('pdf'));
+
+    const prevWs = await request(app)
+      .post('/api/sales/invoice/preview')
+      .send({
+        billType: 'wholesale',
+        items: [{ name: 'Amoxicillin', qty: 1, mrp: 50, selling_price: 50, units_per_strip: 1 }],
+        payment_mode: 'Cash'
+      })
+      .expect(200);
+    assert.ok(prevWs.headers['content-type']?.includes('pdf'));
+  });
 });
+

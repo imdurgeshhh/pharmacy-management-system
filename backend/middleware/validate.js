@@ -316,6 +316,12 @@ const purchaseSchema = validate([
           throw new Error('Selling price must be a valid number >= 0');
         }
       }
+      if (item.mrp !== undefined && item.mrp !== null && item.mrp !== '') {
+        const parsedMrp = parseFloat(item.mrp);
+        if (isNaN(parsedMrp) || parsedMrp < 0) {
+          throw new Error('MRP must be a valid number >= 0');
+        }
+      }
       return true;
     })
 ]);

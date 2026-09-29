@@ -72,4 +72,13 @@ test('Quantity Helpers - Unit Tests', async (t) => {
         assert.equal(formatQty(5, 20), '5 Tab');
     });
 
+    await t.test('formatQty correctly formats Syrup/Bottle, Bottle, Tube, Piece', () => {
+        assert.equal(formatQty(1, 1, 'Syrup/Bottle'), '1 Bottle');
+        assert.equal(formatQty(1, 10, 'Syrup/Bottle'), '1 Bottle');
+        assert.equal(formatQty(3, 1, 'Bottle'), '3 Bottle');
+        assert.equal(formatQty(2, 1, 'Tube'), '2 Tube');
+        assert.equal(formatQty(4, 1, 'Piece'), '4 Piece');
+        assert.equal(formatQty(1, { units_per_strip: 10, unit_type: 'Syrup/Bottle' }), '1 Bottle');
+    });
+
 });

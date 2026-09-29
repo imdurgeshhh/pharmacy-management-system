@@ -398,7 +398,8 @@ export default function Purchases() {
       qty: '',
       is_new: false,
       price: m.purchase_price ? String(m.purchase_price) : (m.mrp ? String(m.mrp) : p.price),
-      selling_price: m.selling_price ? String(m.selling_price) : (m.mrp ? String(m.mrp) : (p.selling_price || ''))
+      selling_price: m.selling_price ? String(m.selling_price) : (m.mrp ? String(m.mrp) : (p.selling_price || '')),
+      mrp: m.mrp ? String(m.mrp) : (m.selling_price ? String(m.selling_price) : '')
     }));
     setFormValidationMsg('');
   };
@@ -422,7 +423,8 @@ export default function Purchases() {
         total_stock: match.total_stock !== undefined ? match.total_stock : 0,
         is_new: false,
         price: p.price || (match.purchase_price ? String(match.purchase_price) : (match.mrp ? String(match.mrp) : p.price)),
-        selling_price: p.selling_price || (match.selling_price ? String(match.selling_price) : (match.mrp ? String(match.mrp) : ''))
+        selling_price: p.selling_price || (match.selling_price ? String(match.selling_price) : (match.mrp ? String(match.mrp) : '')),
+        mrp: p.mrp || (match.mrp ? String(match.mrp) : (match.selling_price ? String(match.selling_price) : ''))
       }));
     } else {
       setForm(p => {
@@ -440,6 +442,7 @@ export default function Purchases() {
           strength: p.medicine_id ? '' : p.strength,
           units_per_strip: p.medicine_id ? defaultUps : (p.units_per_strip || defaultUps),
           selling_price: p.medicine_id ? '' : p.selling_price,
+          mrp: p.medicine_id ? '' : p.mrp,
           is_new: true
         };
       });
@@ -503,6 +506,11 @@ export default function Purchases() {
       document.getElementById('med-selling-price')?.focus();
       return;
     }
+    if (form?.mrp !== undefined && form?.mrp !== '' && parseFloat(form.mrp) < 0) {
+      setFormValidationMsg('Please enter a valid MRP (greater than or equal to 0).');
+      document.getElementById('med-mrp')?.focus();
+      return;
+    }
 
     setFormValidationMsg('');
     const norm = normalizeQty({
@@ -513,13 +521,17 @@ export default function Purchases() {
     const sellPrice = (form?.selling_price !== undefined && form?.selling_price !== '')
       ? parseFloat(form.selling_price)
       : (parseFloat(form.price) || 0);
+    const itemMrp = (form?.mrp !== undefined && form?.mrp !== '')
+      ? parseFloat(form.mrp)
+      : (form?.selling_price !== undefined && form?.selling_price !== '' ? parseFloat(form.selling_price) : sellPrice);
 
     const row = {
       ...compute({ ...form, qty: totalUnits }),
+      mrp: itemMrp,
       selling_price: sellPrice,
       units_per_strip: ups,
       strips_qty: ups > 1 ? norm.strips : 0,
-      loose_qty: ups > 1 ? norm.loose : 0,
+      loose_qty: ups > 1 ? norm.loose : totalUnits,
       formatted_qty: formatQty(totalUnits, ups),
       schedule: form?.schedule || 'NONE',
       is_new: form?.is_new
@@ -539,6 +551,7 @@ export default function Purchases() {
     const decomp = fromTotalUnits(entry.qty, ups);
     setForm({
       ...entry,
+      mrp: entry.mrp !== undefined && entry.mrp !== null ? String(entry.mrp) : (entry.selling_price !== undefined ? String(entry.selling_price) : ''),
       selling_price: entry.selling_price !== undefined ? String(entry.selling_price) : String(entry.mrp || ''),
       units_per_strip: ups,
       strips_qty: entry.strips_qty !== undefined ? String(entry.strips_qty) : (ups > 1 ? String(decomp.strips) : ''),
@@ -561,21 +574,25 @@ export default function Purchases() {
   // ── Save ───────────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
 
-  const handleSave = async () => {
-    if (entries.length === 0) return alert('Add at least one medicine first.');
+  const handleSave = async (submittedEntries) => {
+    const itemsToSave = (Array.isArray(submittedEntries) && submittedEntries.length > 0)
+      ? submittedEntries
+      : entries;
+    if (itemsToSave.length === 0) return alert('Add at least one medicine first.');
 
     setSaving(true);
     try {
-      const totalTax = entries.reduce((s, e) => s + e.tax_amt * (parseFloat(e.qty) || 0), 0);
-      const totalAmt = entries.reduce((s, e) => s + e.final * (parseFloat(e.qty) || 0), 0);
+      const totalTax = itemsToSave.reduce((s, e) => s + e.tax_amt * (parseFloat(e.qty) || 0), 0);
+      const totalAmt = itemsToSave.reduce((s, e) => s + e.final * (parseFloat(e.qty) || 0), 0);
 
       await api.post('/purchases', {
         supplier_id: supplierId,
         total_amount: +totalAmt.toFixed(2),
         tax_amount:   +totalTax.toFixed(2),
-        items: entries.map(e => ({
+        items: itemsToSave.map(e => ({
           medicine_id:      e.medicine_id ? parseInt(e.medicine_id) : null,
           medicine_name:    e.medicine_name,
+          name:             e.medicine_name,
           schedule:         e.schedule || 'NONE',
           brand_name:       e.brand_name || null,
           salt_composition: e.salt_composition || null,
@@ -589,14 +606,14 @@ export default function Purchases() {
           loose_qty:        parseInt(e.loose_qty, 10) || 0,
           price:            parseFloat(e.final),
           tax:              e.tax_amt,
-          selling_price:    parseFloat(e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.price || 0)),
-          mrp:              parseFloat(e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.price || 0)),
+          selling_price:    parseFloat(e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.mrp !== undefined && e.mrp !== '' ? e.mrp : (e.price || 0))),
+          mrp:              parseFloat(e.mrp !== undefined && e.mrp !== '' ? e.mrp : (e.selling_price !== undefined && e.selling_price !== '' ? e.selling_price : (e.price || 0))),
           expiry_date:      e.expiry_date || null,
           tax_percentage:   parseFloat(e.gst_pct) || 0,
         })),
       });
 
-      alert(`✅ ${entries.length} medicine(s) saved to stock!`);
+      alert(`✅ ${itemsToSave.length} medicine(s) saved to stock!`);
       clearPurchaseDraft();
       invalidatePurchasesAndStock();
       loadMedicines(); // Refresh medicines list with any newly added medicine
@@ -951,8 +968,8 @@ export default function Purchases() {
               )}
             </div>
 
-            {/* Row 3: purchase price, selling price, gst%, tax, disc%, disc */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {/* Row 3: purchase price, selling price, mrp, gst%, tax, disc%, disc */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
               <div>
                 <L t="Purchase Price *" htmlFor="med-price" />
                 <input id="med-price" type="number" step="0.01" min="0" value={form.price} onChange={e => sf('price', e.target.value)}
@@ -973,6 +990,13 @@ export default function Purchases() {
                 ) : (
                   <span className="text-[11px] text-gray-500 mt-1 block">Sell price per unit</span>
                 )}
+              </div>
+              <div>
+                <L t="MRP" htmlFor="med-mrp" />
+                <input id="med-mrp" type="number" step="0.01" min="0" value={form.mrp !== undefined ? form.mrp : ''}
+                  onChange={e => sf('mrp', e.target.value)}
+                  placeholder="0.00" aria-label="Maximum Retail Price" className={iCls} />
+                <span className="text-[11px] text-gray-500 mt-1 block">Printed MRP</span>
               </div>
               <div>
                 <L t="GST %" htmlFor="med-gst" />
@@ -1047,6 +1071,9 @@ export default function Purchases() {
           setFormValidationMsg('');
         }}
         onSave={handleSave}
+        onUpdateMrp={(idx, val) => {
+          setEntries(p => (p || []).map((e, i) => i === idx ? { ...e, mrp: val } : e));
+        }}
         saving={saving}
         rupee={rupee}
       />
