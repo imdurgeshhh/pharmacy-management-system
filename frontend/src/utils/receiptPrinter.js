@@ -2,7 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getShopProfile } from '../config/shop';
 import { numberToWords } from './numberToWords';
-import { formatQty, formatExpiryDate } from './quantity';
+import { formatQty, formatExpiryDate, calculateLineItem } from './quantity';
 
 const fmt = (n) => `Rs. ${(Number(n) || 0).toFixed(2)}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -118,7 +118,7 @@ export function generateInvoicePDF(
   let fy;
 
   if (isCustomerBill) {
-    // ── 3. Medicine Items Table (Customer Bill: 5 columns) ─────────────
+    // ── 3. Medicine Items Table (Customer Bill: 6 columns) ─────────────
     let customerSubTotal = 0;
     let customerTotalTax = 0;
     const bodyRows = rows.map((r, i) => {
@@ -132,9 +132,16 @@ export function generateInvoicePDF(
       const sellingPrice = parseFloat(r.selling_price !== undefined && r.selling_price !== null && Number(r.selling_price) > 0
         ? r.selling_price
         : (r.mrp || 0));
-      // Print selling price as-is under MRP (GST Included)
+      const lineCalc = calculateLineItem({
+        strips: r.strips_qty !== undefined ? r.strips_qty : r.strips,
+        loose: r.loose_qty !== undefined ? r.loose_qty : r.loose,
+        qty: totalUnits,
+        unitsPerStrip: ups,
+        sellingPrice,
+        unitType: r.unit_type || r.unitType
+      });
+      const lineBase = lineCalc.lineAmount;
       const gstPct = parseFloat(r.gst_pct !== undefined ? r.gst_pct : (r.gstPct !== undefined ? r.gstPct : 0)) || 0;
-      const lineBase = +(sellingPrice * totalUnits).toFixed(2);
       const lineTax = gstPct > 0 ? +(lineBase * gstPct / 100).toFixed(2) : 0;
       customerSubTotal += lineBase;
       customerTotalTax += lineTax;
@@ -144,24 +151,26 @@ export function generateInvoicePDF(
         nameDesc,
         qtyStr,
         expStr,
-        fmt(sellingPrice)
+        fmt(sellingPrice),
+        lineCalc.breakdown
       ];
     });
 
     autoTable(doc, {
       startY: tableY,
-      head: [['S.No.', 'Medicine Name', 'Quantity', 'Expiry Date', 'MRP (GST Included)']],
+      head: [['S.No.', 'Medicine Name', 'Quantity', 'Expiry Date', 'MRP (GST Included)', 'Qty x Price']],
       body: bodyRows,
       headStyles: { fillColor: [46, 125, 50], textColor: 255, fontSize: 8, fontStyle: 'bold' },
       bodyStyles: { fontSize: 8 },
       alternateRowStyles: { fillColor: [240, 255, 240] },
       styles: { cellPadding: 4 },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 35 },
+        0: { halign: 'center', cellWidth: 30 },
         1: { halign: 'left' },
-        2: { halign: 'center', cellWidth: 80 },
-        3: { halign: 'center', cellWidth: 75 },
-        4: { halign: 'right', cellWidth: 110 }
+        2: { halign: 'center', cellWidth: 70 },
+        3: { halign: 'center', cellWidth: 65 },
+        4: { halign: 'right', cellWidth: 90 },
+        5: { halign: 'right', cellWidth: 100 }
       }
     });
 
@@ -210,10 +219,10 @@ export function generateInvoicePDF(
     doc.text(amountWords, 40, fy + 24, { maxWidth: W - 230 });
 
   } else {
-    // ── 3. Medicine Items Table (Wholesale Bill: full 10 columns) ───────────
+    // ── 3. Medicine Items Table (Wholesale Bill: full 11 columns) ───────────
     autoTable(doc, {
       startY: tableY,
-      head: [['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt']],
+      head: [['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Qty x Price', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt']],
       body: rows.map((r, i) => {
         const ups = parseInt(r.units_per_strip, 10) || 1;
         const totalUnits = parseInt(r.qty, 10) || 0;
@@ -221,12 +230,24 @@ export function generateInvoicePDF(
         const unitType = (r.unit_type || r.unitType || '').toLowerCase();
         const isSpecialUnit = unitType.includes('bottle') || unitType.includes('syrup') || unitType.includes('tube') || unitType.includes('piece');
         const qtyStr = (ups > 1 || isSpecialUnit) ? formatQty(totalUnits, ups, r.unit_type || r.unitType || 'Strip') : r.qty;
+        const sellingPrice = parseFloat(r.selling_price !== undefined && r.selling_price !== null && Number(r.selling_price) > 0
+          ? r.selling_price
+          : (r.mrp || 0));
+        const lineCalc = calculateLineItem({
+          strips: r.strips_qty !== undefined ? r.strips_qty : r.strips,
+          loose: r.loose_qty !== undefined ? r.loose_qty : r.loose,
+          qty: totalUnits,
+          unitsPerStrip: ups,
+          sellingPrice,
+          unitType: r.unit_type || r.unitType
+        });
         return [
           i + 1,
           nameDesc,
           r.hsn_code || r.hsn || '3004',
           qtyStr,
-          fmt(r.selling_price || r.mrp),
+          fmt(sellingPrice),
+          lineCalc.breakdown,
           `${r.disc_pct || 0}%`,
           fmt(r.disc_amt),
           `${r.gst_pct || 0}%`,

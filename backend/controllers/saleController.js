@@ -2,7 +2,7 @@ const { pool } = require('../config/db');
 const generateInvoice = require('../utils/invoiceGenerator');
 const { generateCustomerBillPDF, generateWholesaleBillPDF } = require('../utils/invoiceGenerator');
 const { resolveStoreSettings } = require('../config/store');
-const { normalizeQty, fromTotalUnits, formatQty, pricePerUnit, lineAmount } = require('../utils/quantity');
+const { normalizeQty, fromTotalUnits, formatQty, pricePerUnit, lineAmount, calculateLineItem } = require('../utils/quantity');
 
 exports.generateInvoicePDF = async (req, res) => {
     const { saleId } = req.params;
@@ -87,6 +87,7 @@ exports.generateInvoicePDF = async (req, res) => {
                 const unitsPerStrip = parseInt(item.units_per_strip, 10) || 1;
                 const unitType = item.unit_type || 'Strip';
                 const stripsQty = parseFloat(item.strips_qty) || 0;
+                const looseQty = parseFloat(item.loose_qty) || 0;
                 let medDisplayName = item.name;
                 const normalizedUnitType = (unitType || '').toLowerCase();
                 const isSingleUnit = normalizedUnitType.includes('bottle') || normalizedUnitType.includes('syrup') || normalizedUnitType.includes('tube') || normalizedUnitType.includes('piece');
@@ -99,8 +100,13 @@ exports.generateInvoicePDF = async (req, res) => {
                     medicineName: medDisplayName,
                     pack: item.pack || (unitsPerStrip > 1 && !isSingleUnit ? `${unitsPerStrip} TAB` : '1'),
                     unitsPerStrip: unitsPerStrip,
+                    units_per_strip: unitsPerStrip,
                     unitType: unitType,
+                    unit_type: unitType,
                     stripsQty: stripsQty,
+                    strips_qty: stripsQty,
+                    looseQty: looseQty,
+                    loose_qty: looseQty,
                     hsnCode: item.hsn_code || '3004',
                     batchNo: item.batch_number || 'N/A',
                     expDate: expStr,
@@ -188,8 +194,10 @@ exports.previewInvoicePDF = async (req, res) => {
                 const netRate = tradeRate * (1 - schemePct / 100) * (1 - discountPct / 100);
                 const total = netRate * qty;
 
-                const unitsPerStrip = parseInt(item.units_per_strip, 10) || 1;
-                const stripsQty = parseFloat(item.strips_qty) || 0;
+                const unitsPerStrip = parseInt(item.units_per_strip || item.unitsPerStrip, 10) || 1;
+                const stripsQty = parseFloat(item.strips_qty !== undefined ? item.strips_qty : item.strips) || 0;
+                const looseQty = parseFloat(item.loose_qty !== undefined ? item.loose_qty : item.loose) || 0;
+                const unitType = item.unit_type || item.unitType || 'Strip';
                 let medDisplayName = item.name || item.medicine_name || 'Medicine';
                 if (unitsPerStrip > 1 && stripsQty > 0) {
                     medDisplayName = `${medDisplayName} (${stripsQty} STR × ${unitsPerStrip})`;
@@ -200,7 +208,13 @@ exports.previewInvoicePDF = async (req, res) => {
                     medicineName: medDisplayName,
                     pack: item.pack || (unitsPerStrip > 1 ? `${unitsPerStrip} TAB` : '1'),
                     unitsPerStrip: unitsPerStrip,
+                    units_per_strip: unitsPerStrip,
+                    unitType: unitType,
+                    unit_type: unitType,
                     stripsQty: stripsQty,
+                    strips_qty: stripsQty,
+                    looseQty: looseQty,
+                    loose_qty: looseQty,
                     hsnCode: item.hsn_code || '3004',
                     batchNo: item.batch_number || 'N/A',
                     expDate: item.expiry_date || item.expDate || '--/--',
@@ -311,16 +325,40 @@ exports.createSale = async (req, res) => {
 
         const safeEmployeeId = req.user?.id || (employee_id && !isNaN(employee_id) ? parseInt(employee_id, 10) : null);
         const finalPaymentMode = payment_mode || 'Cash';
-        const finalTotalAmount = (total_amount !== undefined && total_amount !== null && !isNaN(total_amount))
-            ? parseFloat(total_amount)
-            : items.reduce((acc, it) => acc + ((parseFloat(it.qty || it.quantity || 1) * parseFloat(it.price || it.unit_price || 0))), 0);
         const finalTaxAmount = parseFloat(tax_amount || 0);
-        const finalSubTotal = sub_total !== undefined && sub_total !== null ? sub_total : finalTotalAmount;
-        const finalDiscountAmount = discount_amount || 0;
-        const finalSchemeAmount = scheme_amount || 0;
-        const finalCrDrAmount = cr_dr_amount || 0;
-        const finalFreightAmount = freight_amount || 0;
-        const finalRoundOff = round_off || 0;
+        const finalDiscountAmount = parseFloat(discount_amount || 0);
+        const finalSchemeAmount = parseFloat(scheme_amount || 0);
+        const finalCrDrAmount = parseFloat(cr_dr_amount || 0);
+        const finalFreightAmount = parseFloat(freight_amount || 0);
+        const finalRoundOff = parseFloat(round_off || 0);
+
+        let finalSubTotal = sub_total !== undefined && sub_total !== null && !isNaN(sub_total) ? parseFloat(sub_total) : null;
+        let finalTotalAmount = (total_amount !== undefined && total_amount !== null && !isNaN(total_amount))
+            ? parseFloat(total_amount)
+            : null;
+
+        // If subtotal or total amount not provided, compute from items
+        if (finalSubTotal === null || finalTotalAmount === null) {
+            let computedSub = 0;
+            for (const it of items) {
+                const itPrice = parseFloat(it.selling_price || it.mrp || it.price || 0);
+                const itUps = parseInt(it.units_per_strip || it.unitsPerStrip, 10) || 1;
+                const calc = calculateLineItem({
+                    strips: it.strips !== undefined ? it.strips : it.strips_qty,
+                    loose: it.loose !== undefined ? it.loose : it.loose_qty,
+                    qty: it.qty !== undefined ? it.qty : it.quantity,
+                    unitsPerStrip: itUps,
+                    sellingPrice: itPrice,
+                    unitType: it.unit_type || it.unitType || 'Strip'
+                });
+                computedSub += calc.lineAmount;
+            }
+            computedSub = Math.round(computedSub * 100) / 100;
+            if (finalSubTotal === null) finalSubTotal = computedSub;
+            if (finalTotalAmount === null) {
+                finalTotalAmount = Math.round((finalSubTotal - finalDiscountAmount - finalSchemeAmount + finalTaxAmount + finalCrDrAmount + finalFreightAmount + finalRoundOff) * 100) / 100;
+            }
+        }
 
         // Auto-generate invoice number if not provided
         let finalInvoiceNo = invoice_no;
@@ -476,6 +514,14 @@ exports.createSale = async (req, res) => {
                 : (clientSellingPrice > 0 ? clientSellingPrice : parseFloat(invRecord.purchase_price || 0));
 
             const itemPrice = unitsPerStrip > 1 ? pricePerUnit(stripPrice, unitsPerStrip) : stripPrice;
+            const lineCalc = calculateLineItem({
+                strips: stripsQty,
+                loose: looseQty,
+                qty: requestedQty,
+                unitsPerStrip,
+                sellingPrice: stripPrice,
+                unitType: invRecord.unit_type
+            });
             const rawTradeRate = parseFloat(item.trade_rate || invRecord.trade_rate || invRecord.purchase_price || itemPrice) || itemPrice;
             const tradeRate = unitsPerStrip > 1 ? pricePerUnit(rawTradeRate, unitsPerStrip) : rawTradeRate;
             const schemePct = parseFloat(item.scheme_pct) || 0;

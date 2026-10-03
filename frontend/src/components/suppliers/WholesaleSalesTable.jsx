@@ -124,6 +124,7 @@ const WholesaleSalesTable = ({
     { key: 'medicine_name', label: 'Medicine Name' },
     { key: 'quantity', label: 'Qty Sold' },
     { key: 'price_per_unit', label: 'Price/Unit (INR)' },
+    { key: 'breakdown', label: 'Qty x Price' },
     { key: 'gst_number', label: 'GST No.' },
     { key: 'total_amount', label: 'Total (INR)' },
     { key: 'shopkeeper_name', label: 'Shopkeeper' },
@@ -149,6 +150,7 @@ const WholesaleSalesTable = ({
       ...row,
       sale_date_fmt: fmtDate(row.sale_date),
       price_per_unit: fmt(row.price_per_unit),
+      breakdown: `${row.quantity} x ${Number(row.price_per_unit || 0).toFixed(2)} = ${Number(row.total_amount || 0).toFixed(2)}`,
       total_amount: fmt(row.total_amount)
     }];
     exportToPDF(data, SALE_COLUMNS, 'Wholesale Sale Entry', `WS-Sale-${row.id}`, [37, 99, 235]);
@@ -158,6 +160,7 @@ const WholesaleSalesTable = ({
     ...r,
     sale_date_fmt: fmtDate(r.sale_date),
     price_per_unit: Number(r.price_per_unit),
+    breakdown: `${r.quantity} x ${Number(r.price_per_unit || 0).toFixed(2)} = ${Number(r.total_amount || 0).toFixed(2)}`,
     total_amount: Number(r.total_amount),
   }));
 
@@ -226,10 +229,10 @@ const WholesaleSalesTable = ({
 
         {/* Table */}
         <div className="flex-1 overflow-auto rounded-xl border border-blue-100 bg-white shadow-sm no-scrollbar" tabIndex={0} role="region" aria-label="Wholesale sales table">
-          <table className="w-full text-left text-xs border-collapse" style={{ minWidth: '680px' }}>
+          <table className="w-full text-left text-xs border-collapse" style={{ minWidth: '760px' }}>
             <thead className="sticky top-0 z-10">
               <tr className="bg-blue-600 text-white text-xs uppercase tracking-wider">
-                {['Medicine Name', 'Qty', 'Price/Unit', 'GST No.', 'Total', 'Shopkeeper', 'Date', 'Actions'].map(h => (
+                {['Medicine Name', 'Qty', 'Price/Unit', 'Qty x Price', 'GST No.', 'Total', 'Shopkeeper', 'Date', 'Actions'].map(h => (
                   <th key={h} scope="col" className="px-3 py-3 font-semibold whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -237,7 +240,7 @@ const WholesaleSalesTable = ({
             <tbody className="divide-y divide-blue-50">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center">
+                  <td colSpan={9} className="py-12 text-center">
                     <div className="flex flex-col items-center gap-2 text-gray-400">
                       <AlertCircle size={28} aria-hidden="true" />
                       <p className="text-xs font-medium">No wholesale sales found</p>
@@ -250,6 +253,9 @@ const WholesaleSalesTable = ({
                     <td className="px-3 py-2.5 font-medium text-gray-800 max-w-[130px] truncate" title={s.medicine_name}>{s.medicine_name}</td>
                     <td className="px-3 py-2.5 text-gray-600 tabular-nums">{s.quantity}</td>
                     <td className="px-3 py-2.5 text-gray-600 tabular-nums">{fmt(s.price_per_unit)}</td>
+                    <td className="px-3 py-2.5 text-gray-600 font-mono text-[11px] tabular-nums whitespace-nowrap">
+                      {s.quantity} x {Number(s.price_per_unit || 0).toFixed(2)} = {Number(s.total_amount || 0).toFixed(2)}
+                    </td>
                     <td className="px-3 py-2.5">
                       {s.gst_number
                         ? <span className="font-mono text-[11px] bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded-md border border-blue-100">{s.gst_number}</span>

@@ -92,7 +92,7 @@ describe('utils/receiptPrinter.js', () => {
     const tableOptions = autoTable.mock.calls[0][1];
 
     expect(tableOptions.head).toEqual([
-      ['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt'],
+      ['#', 'Medicine', 'HSN', 'Qty', 'MRP', 'Qty x Price', 'Disc%', 'Disc Amt', 'GST%', 'Tax Amt', 'Net Amt'],
     ]);
 
     expect(tableOptions.body).toHaveLength(2);
@@ -102,6 +102,7 @@ describe('utils/receiptPrinter.js', () => {
       '3004',
       2,
       'Rs. 50.00',
+      '2 x 50.00 = 100.00',
       '10%',
       'Rs. 10.00',
       '12%',
@@ -114,6 +115,7 @@ describe('utils/receiptPrinter.js', () => {
       '3004',
       10,
       'Rs. 30.00',
+      '10 x 30.00 = 300.00',
       '0%',
       'Rs. 0.00',
       '5%',
@@ -269,7 +271,7 @@ describe('utils/receiptPrinter.js', () => {
     const tableOptions = autoTable.mock.calls[0][1];
 
     expect(tableOptions.head).toEqual([
-      ['S.No.', 'Medicine Name', 'Quantity', 'Expiry Date', 'MRP (GST Included)']
+      ['S.No.', 'Medicine Name', 'Quantity', 'Expiry Date', 'MRP (GST Included)', 'Qty x Price']
     ]);
 
     expect(tableOptions.body).toHaveLength(2);
@@ -278,6 +280,7 @@ describe('utils/receiptPrinter.js', () => {
     expect(tableOptions.body[0][3]).toBe('--/--');
     // Row 0 has price 50.00 printed as-is under MRP (GST Included)
     expect(tableOptions.body[0][4]).toBe('Rs. 50.00');
+    expect(tableOptions.body[0][5]).toBe('2 x 50.00 = 100.00');
 
     const texts = recordedTexts.map(t => t.str);
     expect(texts).toContain('CUSTOMER BILL');

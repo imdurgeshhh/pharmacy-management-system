@@ -68,6 +68,137 @@ function normalizeQty({ strips = 0, loose = 0, unitsPerStrip = 1 } = {}) {
 }
 
 /**
+ * Calculates line amount and breakdown for an item strictly following billing rules:
+ * 1. Each item has: MRP/selling_price (per strip/pack), units_per_strip.
+ * 2. If sold by STRIP: line amount = strips_qty * per-strip price
+ * 3. If sold LOOSE: per-unit price = per-strip price / units_per_strip, line amount = loose_qty * per-unit price
+ * 4. If mixed strips and loose: compute each part separately and sum them: line amount = (strips_qty * per-strip price) + (loose_qty * per-unit price).
+ * 5. For items without strips (syrup, bottle, etc., or units_per_strip <= 1): line amount = qty * unit price.
+ * 6. Always use units_per_strip from item's own record. If missing or invalid, flag it (missingUnitsPerStrip: true) and fallback to 1 (never guess 10).
+ */
+function calculateLineItem({
+    strips,
+    loose,
+    qty,
+    totalUnits,
+    unitsPerStrip,
+    sellingPrice = 0,
+    mrp = 0,
+    price = 0,
+    unitType = 'Strip'
+} = {}) {
+    let missingUnitsPerStrip = false;
+    let ups = unitsPerStrip;
+
+    if (ups === undefined || ups === null || ups === '' || isNaN(Number(ups))) {
+        missingUnitsPerStrip = true;
+        ups = 1;
+    } else {
+        ups = parseInt(ups, 10);
+        if (ups < 1) {
+            missingUnitsPerStrip = true;
+            ups = 1;
+        }
+    }
+
+    const effectivePrice = Math.max(0, parseFloat(sellingPrice || mrp || price) || 0);
+    const normalizedUnitType = (unitType || '').toString().trim().toLowerCase();
+    const isSingleUnit = ups <= 1 ||
+        normalizedUnitType.includes('bottle') ||
+        normalizedUnitType.includes('syrup') ||
+        normalizedUnitType.includes('tube') ||
+        normalizedUnitType.includes('piece');
+
+    // Parse strips and loose
+    const rawStrips = (strips !== undefined && strips !== null && strips !== '') ? parseInt(strips, 10) : undefined;
+    const rawLoose = (loose !== undefined && loose !== null && loose !== '') ? parseInt(loose, 10) : undefined;
+    const rawQty = (qty !== undefined && qty !== null && qty !== '')
+        ? parseInt(qty, 10)
+        : ((totalUnits !== undefined && totalUnits !== null && totalUnits !== '') ? parseInt(totalUnits, 10) : undefined);
+
+    let finalStrips = 0;
+    let finalLoose = 0;
+    let finalTotalUnits = 0;
+
+    if (isSingleUnit) {
+        finalTotalUnits = Math.max(0, (rawQty !== undefined && !isNaN(rawQty)) ? rawQty : ((rawStrips || 0) + (rawLoose || 0)));
+        finalStrips = 0;
+        finalLoose = finalTotalUnits;
+        const lineAmt = Math.round(finalTotalUnits * effectivePrice * 100) / 100;
+        const breakdown = `${finalTotalUnits} x ${effectivePrice.toFixed(2)} = ${lineAmt.toFixed(2)}`;
+
+        return {
+            unitsPerStrip: 1,
+            missingUnitsPerStrip,
+            stripsQty: 0,
+            looseQty: finalTotalUnits,
+            totalUnits: finalTotalUnits,
+            perStripPrice: effectivePrice,
+            perUnitPrice: effectivePrice,
+            stripAmount: 0,
+            looseAmount: lineAmt,
+            lineAmount: lineAmt,
+            breakdown,
+            isSingleUnit: true
+        };
+    }
+
+    // Multi-unit strip item (ups > 1)
+    if (rawStrips !== undefined || rawLoose !== undefined) {
+        const norm = normalizeQty({ strips: rawStrips || 0, loose: rawLoose || 0, unitsPerStrip: ups });
+        finalStrips = norm.strips;
+        finalLoose = norm.loose;
+        finalTotalUnits = norm.totalUnits;
+    } else {
+        const total = Math.max(0, (rawQty !== undefined && !isNaN(rawQty)) ? rawQty : 0);
+        finalStrips = Math.floor(total / ups);
+        finalLoose = total % ups;
+        finalTotalUnits = total;
+    }
+
+    const perStripPrice = effectivePrice;
+    const perUnitPrice = perStripPrice / ups;
+
+    // Rule 2 & 3 & 4
+    const stripAmount = finalStrips * perStripPrice;
+    const looseAmount = finalLoose * perUnitPrice;
+    const lineAmt = Math.round((stripAmount + looseAmount) * 100) / 100;
+
+    let breakdown = '';
+    if (finalStrips > 0 && finalLoose > 0) {
+        breakdown = `${finalStrips} strip x ${perStripPrice.toFixed(2)} + ${finalLoose} loose x ${perUnitPrice.toFixed(2)} = ${lineAmt.toFixed(2)}`;
+    } else if (finalStrips > 0) {
+        breakdown = `${finalStrips} strip x ${perStripPrice.toFixed(2)} = ${lineAmt.toFixed(2)}`;
+    } else if (finalLoose > 0) {
+        breakdown = `${finalLoose} loose x ${perUnitPrice.toFixed(2)} = ${lineAmt.toFixed(2)}`;
+    } else {
+        breakdown = `0 strip x ${perStripPrice.toFixed(2)} = 0.00`;
+    }
+
+    return {
+        unitsPerStrip: ups,
+        missingUnitsPerStrip,
+        stripsQty: finalStrips,
+        looseQty: finalLoose,
+        totalUnits: finalTotalUnits,
+        perStripPrice,
+        perUnitPrice,
+        stripAmount: Math.round(stripAmount * 100) / 100,
+        looseAmount: Math.round(looseAmount * 100) / 100,
+        lineAmount: lineAmt,
+        breakdown,
+        isSingleUnit: false
+    };
+}
+
+/**
+ * Returns formatted quantity breakdown string: "Qty x Per-item price = Line amount".
+ */
+function formatLineBreakdown(params = {}) {
+    return calculateLineItem(params).breakdown;
+}
+
+/**
  * Computes price per unit (single tablet).
  */
 function pricePerUnit(stripPrice = 0, unitsPerStrip = 1) {
@@ -78,11 +209,16 @@ function pricePerUnit(stripPrice = 0, unitsPerStrip = 1) {
 
 /**
  * Computes line amount for given total units and strip price, rounded to 2 decimal places.
+ * Backwards-compatible wrapper calling calculateLineItem.
  */
-function lineAmount(totalUnits = 0, stripPrice = 0, unitsPerStrip = 1) {
-    const units = Math.max(0, parseInt(totalUnits, 10) || 0);
-    const unitPrice = pricePerUnit(stripPrice, unitsPerStrip);
-    return Math.round(units * unitPrice * 100) / 100;
+function lineAmount(totalUnits = 0, stripPrice = 0, unitsPerStrip = 1, strips, loose) {
+    return calculateLineItem({
+        qty: totalUnits,
+        sellingPrice: stripPrice,
+        unitsPerStrip,
+        strips,
+        loose
+    }).lineAmount;
 }
 
 /**
@@ -181,6 +317,8 @@ module.exports = {
     fromTotalUnits,
     normalizeQty,
     pricePerUnit,
+    calculateLineItem,
+    formatLineBreakdown,
     lineAmount,
     formatQty,
     formatExpiryDate

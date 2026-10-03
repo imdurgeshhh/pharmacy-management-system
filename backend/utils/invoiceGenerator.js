@@ -56,6 +56,8 @@ function generateInvoice(data, res) {
   const cashier = data.cashier || data.userName || data.employeeName || data.employee_name || 'Admin';
   const oldBalance = parseFloat(data.oldBalance || data.credit_balance || data.summary?.balance || 0).toFixed(2);
 
+  const { calculateLineItem } = require('./quantity');
+
   // Items processing
   const items = Array.isArray(data.items) ? data.items : [];
   let totalUnits = 0;
@@ -72,6 +74,15 @@ function generateInvoice(data, res) {
     const schPct = parseFloat(it.scheme_pct || it.schemePct || it.schPct || it.sch_pct || 0);
     const discPct = parseFloat(it.discount_pct || it.discountPct || it.discPct || it.disc_pct || 0);
 
+    const itemCalc = calculateLineItem({
+      strips: it.strips_qty !== undefined ? it.strips_qty : it.stripsQty,
+      loose: it.loose_qty !== undefined ? it.loose_qty : it.looseQty,
+      qty,
+      unitsPerStrip: it.units_per_strip || it.unitsPerStrip,
+      sellingPrice: mrp,
+      unitType: it.unit_type || it.unitType || 'Strip'
+    });
+
     // Net rate calculation
     let netRate = parseFloat(it.net_rate || it.netRate || 0);
     if (!netRate) {
@@ -82,7 +93,7 @@ function generateInvoice(data, res) {
     // Net total
     let netTotal = parseFloat(it.net_total || it.netTotal || it.total || 0);
     if (!netTotal) {
-      netTotal = +(netRate * qty).toFixed(2);
+      netTotal = itemCalc.lineAmount;
     }
 
     totalUnits += (qty + freeQty);
@@ -111,6 +122,7 @@ function generateInvoice(data, res) {
       batch: batchVal,
       exp: expFormatted || 'N/A',
       mrp: mrp.toFixed(2),
+      qtyPrice: itemCalc.breakdown,
       qtyFr: freeQty > 0 ? `${qty}+${freeQty}` : `${qty}`,
       trRate: trRate.toFixed(2),
       schPct: schPct.toFixed(2),
@@ -136,19 +148,20 @@ function generateInvoice(data, res) {
   // Column definitions: width & offset from leftX
   // Total widths must equal 555
   const cols = [
-    { id: 'oldMrp',      name: 'OLD.MRP',     w: 38, align: 'right'  },
-    { id: 'hsn',         name: 'HSN',         w: 46, align: 'center' },
-    { id: 'particulars', name: 'Particulars', w: 122, align: 'left'   },
-    { id: 'pack',        name: 'Pack',        w: 34, align: 'center' },
-    { id: 'batch',       name: 'Batch',       w: 48, align: 'center' },
-    { id: 'exp',         name: 'Exp',         w: 32, align: 'center' },
-    { id: 'mrp',         name: 'MRP',         w: 36, align: 'right'  },
-    { id: 'qtyFr',       name: 'Qty+Fr',      w: 34, align: 'center' },
-    { id: 'trRate',      name: 'Tr.Rate',     w: 36, align: 'right'  },
-    { id: 'schPct',      name: 'Sch%',        w: 26, align: 'right'  },
-    { id: 'discPct',     name: 'Disc%',       w: 26, align: 'right'  },
+    { id: 'oldMrp',      name: 'OLD.MRP',     w: 32, align: 'right'  },
+    { id: 'hsn',         name: 'HSN',         w: 38, align: 'center' },
+    { id: 'particulars', name: 'Particulars', w: 104, align: 'left'   },
+    { id: 'pack',        name: 'Pack',        w: 26, align: 'center' },
+    { id: 'batch',       name: 'Batch',       w: 38, align: 'center' },
+    { id: 'exp',         name: 'Exp',         w: 26, align: 'center' },
+    { id: 'mrp',         name: 'MRP',         w: 32, align: 'right'  },
+    { id: 'qtyPrice',    name: 'Qty x Price', w: 75, align: 'right'  },
+    { id: 'qtyFr',       name: 'Qty+Fr',      w: 28, align: 'center' },
+    { id: 'trRate',      name: 'Tr.Rate',     w: 32, align: 'right'  },
+    { id: 'schPct',      name: 'Sch%',        w: 22, align: 'right'  },
+    { id: 'discPct',     name: 'Disc%',       w: 22, align: 'right'  },
     { id: 'netRate',     name: 'NET RATE',    w: 36, align: 'right'  },
-    { id: 'netTotal',    name: 'Net Total',   w: 41, align: 'right'  },
+    { id: 'netTotal',    name: 'Net Total',   w: 44, align: 'right'  },
   ];
 
   // Calculate cumulative X offsets
@@ -299,12 +312,13 @@ function generateInvoice(data, res) {
     doc.text(it.batch,       cols[4].x + pad,  rowY, { width: cols[4].w - pad * 2, align: cols[4].align });
     doc.text(it.exp,         cols[5].x + pad,  rowY, { width: cols[5].w - pad * 2, align: cols[5].align });
     doc.text(it.mrp,         cols[6].x + pad,  rowY, { width: cols[6].w - pad * 2, align: cols[6].align });
-    doc.text(it.qtyFr,       cols[7].x + pad,  rowY, { width: cols[7].w - pad * 2, align: cols[7].align });
-    doc.text(it.trRate,      cols[8].x + pad,  rowY, { width: cols[8].w - pad * 2, align: cols[8].align });
-    doc.text(it.schPct,      cols[9].x + pad,  rowY, { width: cols[9].w - pad * 2, align: cols[9].align });
-    doc.text(it.discPct,     cols[10].x + pad, rowY, { width: cols[10].w - pad * 2, align: cols[10].align });
-    doc.text(it.netRate,     cols[11].x + pad, rowY, { width: cols[11].w - pad * 2, align: cols[11].align });
-    doc.text(it.netTotal,    cols[12].x + pad, rowY, { width: cols[12].w - pad * 2, align: cols[12].align });
+    doc.text(it.qtyPrice,    cols[7].x + pad,  rowY, { width: cols[7].w - pad * 2, align: cols[7].align });
+    doc.text(it.qtyFr,       cols[8].x + pad,  rowY, { width: cols[8].w - pad * 2, align: cols[8].align });
+    doc.text(it.trRate,      cols[9].x + pad,  rowY, { width: cols[9].w - pad * 2, align: cols[9].align });
+    doc.text(it.schPct,      cols[10].x + pad, rowY, { width: cols[10].w - pad * 2, align: cols[10].align });
+    doc.text(it.discPct,     cols[11].x + pad, rowY, { width: cols[11].w - pad * 2, align: cols[11].align });
+    doc.text(it.netRate,     cols[12].x + pad, rowY, { width: cols[12].w - pad * 2, align: cols[12].align });
+    doc.text(it.netTotal,    cols[13].x + pad, rowY, { width: cols[13].w - pad * 2, align: cols[13].align });
 
     rowY += rowH;
   });
@@ -375,27 +389,38 @@ function generateInvoice(data, res) {
 // Alias for wholesale bill — keeps the existing detailed layout
 const generateWholesaleBillPDF = generateInvoice;
 
-const { formatQty: fmtQty, formatExpiryDate } = require('./quantity');
+const { formatQty: fmtQty, formatExpiryDate, calculateLineItem: calcLineItem } = require('./quantity');
 
 function prepareCustomerBillItems(items) {
   let subTotal = 0;
   let totalTax = 0;
   const processedItems = (Array.isArray(items) ? items : []).map((it, idx) => {
-    const qty = parseFloat(it.qty) || 0;
-    // Strictly read selling_price, fallback to mrp (never purchase_price)
-    const sellingPrice = parseFloat(it.selling_price !== undefined && it.selling_price !== null && Number(it.selling_price) > 0
-      ? it.selling_price
-      : (it.mrp || it.price || 0));
+    const ups = it.unitsPerStrip !== undefined ? it.unitsPerStrip : it.units_per_strip;
+    const rawStrips = it.strips_qty !== undefined ? it.strips_qty : it.strips;
+    const rawLoose = it.loose_qty !== undefined ? it.loose_qty : it.loose;
+    const sellingPrice = parseFloat(
+      it.selling_price !== undefined && it.selling_price !== null && Number(it.selling_price) > 0
+        ? it.selling_price
+        : (it.mrp || it.price || 0)
+    );
+    const unitType = it.unitType || it.unit_type || 'Strip';
+
+    const itemCalc = calcLineItem({
+      strips: rawStrips,
+      loose: rawLoose,
+      qty: it.qty,
+      unitsPerStrip: ups,
+      sellingPrice,
+      unitType
+    });
+
+    const lineBase = itemCalc.lineAmount;
     const gstPct = parseFloat(it.gstPct !== undefined ? it.gstPct : (it.gst_pct !== undefined ? it.gst_pct : 0)) || 0;
-    // Print selling price as-is under MRP (GST Included)
-    const lineBase = +(sellingPrice * qty).toFixed(2);
     const lineTax = gstPct > 0 ? +(lineBase * gstPct / 100).toFixed(2) : 0;
     subTotal += lineBase;
     totalTax += lineTax;
 
-    const ups = parseInt(it.unitsPerStrip || it.units_per_strip || 1, 10) || 1;
-    const unitType = it.unitType || it.unit_type || 'Strip';
-    const qtyStr = fmtQty(qty, ups, unitType);
+    const qtyStr = fmtQty(itemCalc.totalUnits, itemCalc.unitsPerStrip, unitType);
     const expStr = formatExpiryDate(it.expDate || it.expiryDate || it.expiry_date || it.exp || it.expiry);
 
     return {
@@ -406,17 +431,20 @@ function prepareCustomerBillItems(items) {
       sellingPrice,
       gstPct,
       mrpGstIncl: sellingPrice,
+      breakdown: itemCalc.breakdown,
+      qtyPrice: itemCalc.breakdown,
       lineTotal: lineBase,
-      tax: lineTax
+      tax: lineTax,
+      unitsPerStrip: itemCalc.unitsPerStrip
     };
   });
 
-  return { processedItems, subTotal, totalTax };
+  return { processedItems, subTotal: +subTotal.toFixed(2), totalTax: +totalTax.toFixed(2) };
 }
 
 /**
- * Generates a simplified Customer Bill PDF.
- * Table columns: S.No. | Medicine Name | Quantity | Expiry Date | MRP (GST Included)
+ * Generates a Customer Bill PDF.
+ * Table columns: S.No. | Medicine Name | Quantity | Expiry Date | MRP (GST Included) | Qty x Price
  * Summary: Subtotal, Discount, Grand Total only.
  * Total in words shown at the bottom.
  */
@@ -489,11 +517,12 @@ function generateCustomerBillPDF(data, res) {
 
   // ── 3. ITEMS TABLE ────────────────────────────────────────────────────
   const cols = [
-    { label: 'S.No.',                x: lX,       w: 32,  align: 'center' },
-    { label: 'Medicine Name',        x: lX + 32,  w: 215, align: 'left'   },
-    { label: 'Quantity',             x: lX + 247, w: 85,  align: 'center' },
-    { label: 'Expiry Date',          x: lX + 332, w: 75,  align: 'center' },
-    { label: 'MRP (GST Included)',   x: lX + 407, w: rX - (lX + 407), align: 'right' },
+    { label: 'S.No.',                x: lX,       w: 28,  align: 'center' },
+    { label: 'Medicine Name',        x: lX + 28,  w: 165, align: 'left'   },
+    { label: 'Quantity',             x: lX + 193, w: 75,  align: 'center' },
+    { label: 'Expiry Date',          x: lX + 268, w: 55,  align: 'center' },
+    { label: 'MRP (GST Included)',   x: lX + 323, w: 75,  align: 'right'  },
+    { label: 'Qty x Price',          x: lX + 398, w: rX - (lX + 398), align: 'right' },
   ];
 
   const hdrH = 18;
@@ -501,7 +530,7 @@ function generateCustomerBillPDF(data, res) {
   doc.rect(lX, metaY, rX - lX, hdrH).fillAndStroke('#1a5c2e', '#1a5c2e');
   doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7.5);
   cols.forEach(c => {
-    doc.text(c.label, c.x + 3, metaY + 4, { width: c.w - 6, align: c.align });
+    doc.text(c.label, c.x + 2, metaY + 4, { width: c.w - 4, align: c.align });
   });
 
   let rowY = metaY + hdrH;
@@ -515,11 +544,12 @@ function generateCustomerBillPDF(data, res) {
     const fillColor = i % 2 === 0 ? '#f9fdf9' : '#ffffff';
     doc.rect(lX, rowY, rX - lX, rowH).fill(fillColor);
     doc.fillColor('#222222').font('Helvetica').fontSize(7.5);
-    doc.text(String(it.idx),                    cols[0].x + 3, rowY + 3, { width: cols[0].w - 6, align: cols[0].align });
-    doc.text(it.name,                           cols[1].x + 3, rowY + 3, { width: cols[1].w - 6, align: cols[1].align });
-    doc.text(it.qtyStr,                         cols[2].x + 3, rowY + 3, { width: cols[2].w - 6, align: cols[2].align });
-    doc.text(it.expStr,                         cols[3].x + 3, rowY + 3, { width: cols[3].w - 6, align: cols[3].align });
-    doc.text(`Rs. ${it.sellingPrice.toFixed(2)}`, cols[4].x + 3, rowY + 3, { width: cols[4].w - 6, align: cols[4].align });
+    doc.text(String(it.idx),                    cols[0].x + 2, rowY + 3, { width: cols[0].w - 4, align: cols[0].align });
+    doc.text(it.name,                           cols[1].x + 2, rowY + 3, { width: cols[1].w - 4, align: cols[1].align });
+    doc.text(it.qtyStr,                         cols[2].x + 2, rowY + 3, { width: cols[2].w - 4, align: cols[2].align });
+    doc.text(it.expStr,                         cols[3].x + 2, rowY + 3, { width: cols[3].w - 4, align: cols[3].align });
+    doc.text(`Rs. ${it.sellingPrice.toFixed(2)}`, cols[4].x + 2, rowY + 3, { width: cols[4].w - 4, align: cols[4].align });
+    doc.text(it.breakdown,                      cols[5].x + 2, rowY + 3, { width: cols[5].w - 4, align: cols[5].align });
     rowY += rowH;
   });
 

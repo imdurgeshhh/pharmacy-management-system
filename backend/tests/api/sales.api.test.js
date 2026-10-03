@@ -307,7 +307,8 @@ test('Module: sales', async (t) => {
     const mockItems = [
       {
         name: 'Paracetamol 650',
-        qty: 2,
+        qty: 20,
+        strips_qty: 2,
         purchase_price: 20.00,
         selling_price: 35.00,
         mrp: 35.00,

@@ -11,7 +11,7 @@ import MedicinePicker from '../components/pos/MedicinePicker';
 import ConfirmModal from '../components/common/ConfirmModal';
 import { generateInvoicePDF } from '../utils/receiptPrinter';
 import { getShopProfile, mapStoreResponse } from '../config/shop';
-import { toTotalUnits, fromTotalUnits, normalizeQty, pricePerUnit, lineAmount, formatQty, formatExpiryDate } from '../utils/quantity';
+import { toTotalUnits, fromTotalUnits, normalizeQty, pricePerUnit, lineAmount, formatQty, formatExpiryDate, calculateLineItem } from '../utils/quantity';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
@@ -23,18 +23,29 @@ const billNo = () => `BILL-${Date.now().toString().slice(-6)}`;
 
 // ─── Row computation ──────────────────────────────────────────────────────────
 const computeRow = (r, billType = 'customer') => {
-  const mrp   = parseFloat(r.mrp)      || 0;
+  const sellingPrice = parseFloat(r.selling_price || r.mrp) || 0;
+  const mrp   = parseFloat(r.mrp)      || sellingPrice;
   const qty   = parseFloat(r.qty)      || 0;
   const ups   = parseInt(r.units_per_strip, 10) || 1;
   const gst   = parseFloat(r.gst_pct)  || 0;
   const disc  = parseFloat(r.disc_pct) || 0;
-  const unitPrice = pricePerUnit(mrp, ups);
 
-  const base     = +(qty * unitPrice).toFixed(2);
+  const lineCalc = calculateLineItem({
+    strips: r.strips !== undefined && r.strips !== '' ? r.strips : r.strips_qty,
+    loose: r.loose !== undefined && r.loose !== '' ? r.loose : (r.loose_qty !== undefined ? r.loose_qty : undefined),
+    qty,
+    unitsPerStrip: ups,
+    sellingPrice,
+    unitType: r.unit_type
+  });
+
+  const base     = lineCalc.lineAmount;
+  const unitPrice = lineCalc.unitPrice;
+  const breakdown = lineCalc.breakdown;
   const disc_amt = +(base * disc / 100).toFixed(2);
   const tax_amt  = gst > 0 ? +(base * gst / 100).toFixed(2) : 0;
   const net_amt  = +(base - disc_amt + tax_amt).toFixed(2);
-  return { ...r, unitPrice, base, disc_amt, tax_amt, net_amt };
+  return { ...r, unitPrice, base, disc_amt, tax_amt, net_amt, breakdown };
 };
 
 // ─── Input styles ─────────────────────────────────────────────────────────────
@@ -347,7 +358,7 @@ export default function POS() {
         tax_amount: summary.totalGST,
         sub_total: summary.subtotal,
         discount_amount: summary.totalDiscount,
-        round_off: summary.roundOffDiff || 0,
+        round_off: summary.roundOff_amt !== undefined ? summary.roundOff_amt : (summary.roundOffDiff || 0),
         payment_mode: paymentMode,
         invoice_no: BILL_NO,
         doctor_name: customer.doctor,
@@ -537,12 +548,13 @@ export default function POS() {
           </legend>
 
           <div className="overflow-x-auto w-full min-w-0" tabIndex={0} role="region" aria-label="Medicine items list">
-            <table className="w-full text-xs text-left" style={{ minWidth: 880 }}>
+            <table className="w-full text-xs text-left" style={{ minWidth: 1020 }}>
               <thead className="bg-green-50 border-b border-green-100 text-green-950 uppercase tracking-wider font-bold">
                 <tr>
                   <th id="th-pos-med" scope="col" className="px-3 py-2.5 text-left font-bold min-w-[170px] text-green-950">Medicine</th>
                   <th id="th-pos-qty" scope="col" className="px-2 py-2.5 text-center font-bold min-w-[175px] text-green-950">Qty</th>
                   <th id="th-pos-mrp" scope="col" className="px-2 py-2.5 text-left font-bold w-24 text-green-950">{billType === 'customer' ? 'MRP (GST Incl)' : 'MRP'}</th>
+                  <th id="th-pos-breakdown" scope="col" className="px-2 py-2.5 text-left font-bold min-w-[170px] text-green-950">Qty x Price</th>
                   <th id="th-pos-gst" scope="col" className="px-2 py-2.5 text-center font-bold w-16 text-green-950">GST%</th>
                   <th id="th-pos-tax" scope="col" className="px-2 py-2.5 text-right font-bold w-20 text-green-950">Tax</th>
                   <th id="th-pos-disc" scope="col" className="px-2 py-2.5 text-center font-bold w-16 text-green-950">Disc%</th>
@@ -732,6 +744,11 @@ export default function POS() {
                             )}
                           </div>
                         )}
+                      </td>
+
+                      {/* Qty x Price */}
+                      <td className="px-2 py-2 text-left font-mono text-gray-700 font-medium tabular-nums text-[11px] whitespace-nowrap">
+                        {c?.breakdown || '—'}
                       </td>
 
                       {/* GST% */}
